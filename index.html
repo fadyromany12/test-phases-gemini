@@ -3177,10 +3177,14 @@ function updateCurrentStatus(statusInfo) {
   const lastActionTime = new Date(statusInfo.time);
   const loginTime = statusInfo.loginTime ? new Date(statusInfo.loginTime) : null;
   
-  // Show Timers Grid if logged in
-  if (loginTime) {
+  // Show Timers Grid if logged in OR if there is an active status
+  if (loginTime || (currentStatusName && currentStatusName !== "Logged Out")) {
     timersGrid.style.display = 'grid';
-    shiftStartDisplay.innerText = loginTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    if (loginTime) {
+       shiftStartDisplay.innerText = loginTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    } else {
+       shiftStartDisplay.innerText = "--:--"; // Handle missing login time gracefully
+    }
   } else {
     timersGrid.style.display = 'none';
   }
@@ -7553,37 +7557,71 @@ function actionOvertime(id, action) {
 
 function loadBreakConfig() {
   const container = document.getElementById('break-config-container');
-  container.innerHTML = '<p class="text-color-secondary">Loading rules...</p>';
+  container.innerHTML = '<p class="text-color-secondary">Loading configuration...</p>';
   
+  // 1. Fetch Projects First
   google.script.run
-    .withSuccessHandler(configs => {
-      let html = '';
-      configs.forEach((conf, index) => {
-        html += `
-          <div class="form-row break-rule-row" style="border-bottom:1px solid var(--border-color); padding-bottom:10px; margin-bottom:10px;">
-            <div class="form-group" style="flex:2;">
-              <label>Break Type</label>
-              <input type="text" class="rule-type" value="${conf.type}" readonly style="background-color: var(--input-bg); font-weight:bold;">
-            </div>
-            <div class="form-group">
-              <label>Default (Sec)</label>
-              <input type="number" class="rule-default" value="${conf.defaultDur}">
-              <small class="text-color-secondary">${Math.floor(conf.defaultDur/60)} mins</small>
-            </div>
-            <div class="form-group">
-              <label>Max Allowed (Sec)</label>
-              <input type="number" class="rule-max" value="${conf.maxDur}">
-              <small class="text-color-secondary">${Math.floor(conf.maxDur/60)} mins</small>
-            </div>
-          </div>
-        `;
-      });
-      container.innerHTML = html;
+    .withSuccessHandler(projects => {
+      
+      // 2. Then Fetch Break Configs
+      google.script.run
+        .withSuccessHandler(configs => {
+          if (!configs || configs.length === 0) {
+            container.innerHTML = '<p class="status-message warning visible">No break rules found. Please run setup script.</p>';
+            return;
+          }
+
+          let html = '';
+          configs.forEach((conf) => {
+            // Build Project Options
+            let projectOptions = `<option value="ALL">ALL (Global)</option>`;
+            projects.forEach(p => {
+              const selected = (p.id === conf.project) ? 'selected' : '';
+              projectOptions += `<option value="${p.id}" ${selected}>${p.name}</option>`;
+            });
+
+            html += `
+              <div class="form-row break-rule-row" style="border-bottom:1px solid var(--border-color); padding-bottom:10px; margin-bottom:10px; align-items:flex-end;">
+                
+                <div class="form-group" style="flex:1;">
+                  <label>Break Type</label>
+                  <input type="text" class="rule-type" value="${conf.type}" readonly style="background-color: var(--input-bg); font-weight:bold; border:none; padding-left:0;">
+                </div>
+
+                <div class="form-group" style="flex:2;">
+                  <label>Project Scope</label>
+                  <select class="rule-project" data-original-project="${conf.project}">
+                    ${projectOptions}
+                  </select>
+                </div>
+
+                <div class="form-group" style="flex:1;">
+                  <label>Default (Sec)</label>
+                  <input type="number" class="rule-default" value="${conf.defaultDur}">
+                  <small class="text-color-secondary" style="margin-top:2px;">${(conf.defaultDur/60).toFixed(1)} min</small>
+                </div>
+
+                <div class="form-group" style="flex:1;">
+                  <label>Max (Sec)</label>
+                  <input type="number" class="rule-max" value="${conf.maxDur}">
+                  <small class="text-color-secondary" style="margin-top:2px;">${(conf.maxDur/60).toFixed(1)} min</small>
+                </div>
+
+              </div>
+            `;
+          });
+          container.innerHTML = html;
+        })
+        .withFailureHandler(err => {
+          container.innerHTML = `<p class="status-message error visible">Config Error: ${err.message}</p>`;
+        })
+        .webGetBreakConfig();
+
     })
     .withFailureHandler(err => {
-      container.innerHTML = `<p class="status-message error visible">${err.message}</p>`;
+      container.innerHTML = `<p class="status-message error visible">Project Load Error: ${err.message}</p>`;
     })
-    .webGetBreakConfig();
+    .webGetProjects();
 }
 
 function saveBreakConfig() {
@@ -7591,8 +7629,11 @@ function saveBreakConfig() {
   const newConfigs = [];
   
   rows.forEach(row => {
+    const projectSelect = row.querySelector('.rule-project');
     newConfigs.push({
       type: row.querySelector('.rule-type').value,
+      project: projectSelect.value, // New selected project
+      originalProject: projectSelect.getAttribute('data-original-project'), // Old project (for lookup)
       defaultDur: row.querySelector('.rule-default').value,
       maxDur: row.querySelector('.rule-max').value
     });
@@ -7603,15 +7644,14 @@ function saveBreakConfig() {
   google.script.run
     .withSuccessHandler(msg => {
       setStatus('break-config-status', 'success', msg);
-      // Refresh user info silently to apply new rules to the current session immediately
-      google.script.run.withSuccessHandler(user => populateUserInfo(user)).getUserInfo();
+      // Reload to refresh the "original-project" data attributes
+      loadBreakConfig();
     })
     .withFailureHandler(err => {
       setStatus('break-config-status', 'error', err.message);
     })
     .webSaveBreakConfig(newConfigs);
 }
-
 
       // Initialize
       document.addEventListener("DOMContentLoaded", function() {
