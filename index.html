@@ -1439,6 +1439,17 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
             <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
             <span class="nav-button-text">Performance</span>
           </button>
+
+          <button id="offboarding-tab-button" class="tab-button" onclick="showTab('offboarding')">
+            <span class="nav-icon">🚪</span>
+            <span class="nav-button-text">Offboarding</span>
+          </button>
+
+          <button id="overtime-tab-button" class="tab-button" onclick="showTab('overtime')">
+            <span class="nav-icon">⏱</span>
+            <span class="nav-button-text">Overtime</span>
+          </button>
+
         </div>
         
         <div class="nav-group">
@@ -1455,15 +1466,13 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
             <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><polyline points="17 11 19 13 23 9"></polyline></svg>
             <span class="nav-button-text">Reporting Line</span>
           </button>
-          <button id="overtime-tab-button" class="tab-button" onclick="showTab('overtime')">
-            <span class="nav-icon">⏱</span>
-            <span class="nav-button-text">Overtime</span>
-          </button>
+        
           <!-- MODIFIED: Coaching tab removed from here -->
         </div>
 
         <div class="nav-group">
           <div class="nav-group-title" title="Admin"><span>Admin</span></div>
+
           <button id="finance-admin-tab-button" class="tab-button" onclick="showTab('finance-admin')">
             <span class="nav-icon">💰</span>
             <span class="nav-button-text">Finance Admin</span>
@@ -1945,35 +1954,6 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
   <div id="admin-leave-status" class="status-message"></div>
 
   <hr class="section-divider">
-
-  <div id="offboarding-section" style="border: 1px solid #e53e3e; padding: 20px; border-radius: 8px; background-color: #fff5f5;">
-    <h3 style="color: #c53030; margin-top:0;">⚠ Offboarding / Termination</h3>
-    <p class="text-color-secondary">Use this to process an employee exit. This will set their status to "Left".</p>
-    
-    <form id="offboard-form">
-      <div class="form-row">
-        <div class="form-group">
-  <label>Select Employee</label>
-  <div id="offboard-user-select-container"></div>
-</div>
-        <div class="form-group">
-          <label>Exit Date</label>
-          <input type="date" id="offboard-date" required>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Reason for Exit</label>
-        <select id="offboard-reason">
-          <option value="Resignation">Resignation</option>
-          <option value="Termination">Termination</option>
-          <option value="Contract End">Contract End</option>
-          <option value="Other">Other</option>
-        </select>
-      </div>
-      <button type="button" class="btn-danger" onclick="submitOffboarding()">Process Exit</button>
-    </form>
-    <div id="offboard-status" class="status-message"></div>
-  </div>
 
 </div>
 
@@ -2511,27 +2491,13 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
 
   <br>
 
-  <div style="border: 1px solid #e53e3e; padding: 20px; border-radius: 8px; background-color: #fff5f5;">
-    <h3 style="color: #c53030; margin-top:0;">⚠ Offboarding / Termination</h3>
-    <div class="form-row">
-      <div class="form-group">
-        <label>Select Employee</label>
-        <div id="hr-offboard-user-select-container"></div>
-      </div>
-      <div class="form-group"><label>Exit Date</label><input type="date" id="hr-offboard-date"></div>
-    </div>
-    <div class="form-group"><label>Reason</label><select id="hr-offboard-reason"><option>Resignation</option><option>Termination</option></select></div>
-    <button class="btn-danger" onclick="submitHrOffboarding()">Process Exit</button>
-    <div id="hr-offboard-status" class="status-message"></div>
-  </div>
-
   <br>
   
 
 </div>
 
         <!-- ================================== -->
-        <!--  TAB 1: Overtime PANEL -->
+        <!--  TAB 17: Overtime PANEL -->
         <!-- ================================== -->
 
 
@@ -2587,6 +2553,36 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
         </select>
     </div>
   </div>
+
+        <!-- ================================== -->
+        <!--  TAB 1: offboarding PANEL -->
+        <!-- ================================== -->
+
+  <div id="offboarding-panel" class="tab-panel">
+  <h2>Offboarding & Exits</h2>
+  
+  <div id="offboard-initiate-section" class="form-container" style="margin-bottom:20px; border-color: #dc2626;">
+      <h3 style="color:#dc2626; margin-top:0;">⚠ Initiate Termination</h3>
+      <p class="text-color-secondary">Submit a request to terminate an employee. Requires HR Approval.</p>
+      <div class="form-row">
+          <div class="form-group">
+              <label>Select Employee</label>
+              <div id="offboard-term-user-container"></div>
+          </div>
+          <div class="form-group"><label>Exit Date</label><input type="date" id="term-date"></div>
+      </div>
+      <div class="form-group"><label>Reason</label><textarea id="term-reason" rows="2"></textarea></div>
+      <button class="btn-danger" onclick="submitTermination()">Submit Termination</button>
+  </div>
+
+  <hr class="section-divider">
+
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h3>Request Queue</h3>
+      <button class="btn-secondary" onclick="loadOffboardingRequests()">Refresh</button>
+  </div>
+  <div id="offboarding-list" class="request-list">Loading...</div>
+</div>
         
       </main> <!-- End #app-content -->
       
@@ -7930,6 +7926,91 @@ function loadProjectDashboardData() {
         });
         list.innerHTML = html;
     }).webGetProjectRequests(pid);
+}
+
+function loadOffboardingTab() {
+    // Populate dropdown for termination
+    if (['admin','superadmin','manager','project_manager'].includes(selfRole)) {
+        populateAdminDropdown(allUsersList, selfUserName, 'offboard-term-user', 'Select Employee');
+        document.getElementById('offboard-initiate-section').style.display = 'block';
+    } else {
+        document.getElementById('offboard-initiate-section').style.display = 'none';
+    }
+    loadOffboardingRequests();
+}
+
+function submitResignation() {
+    const date = document.getElementById('resign-date').value;
+    const reason = document.getElementById('resign-reason').value;
+    if(!date || !reason) { alert("Date and Reason required."); return; }
+    
+    if(!confirm("Are you sure you want to resign? This starts the formal process.")) return;
+    
+    google.script.run.withSuccessHandler(alert).webSubmitResignation(reason, date);
+}
+
+function submitTermination() {
+    const email = document.getElementById('offboard-term-user').value;
+    const date = document.getElementById('term-date').value;
+    const reason = document.getElementById('term-reason').value;
+    
+    if(!email || !date || !reason) { alert("All fields required."); return; }
+    
+    google.script.run.withSuccessHandler(msg => {
+        alert(msg);
+        loadOffboardingRequests();
+    }).webSubmitTermination(email, reason, date);
+}
+
+function loadOffboardingRequests() {
+    const list = document.getElementById('offboarding-list');
+    list.innerHTML = 'Loading...';
+    
+    google.script.run.withSuccessHandler(reqs => {
+        if(reqs.length === 0) { list.innerHTML = "No pending requests."; return; }
+        let html = '';
+        reqs.forEach(r => {
+            let actions = '';
+            // Logic: Show Approve/Deny if user is authorized and status is pending them
+            // Simplified for brevity: Check role
+            if (['admin','superadmin','manager','project_manager'].includes(selfRole) && r.status !== 'Approved' && r.status !== 'Denied') {
+                 actions = `
+                    <div style="margin-top:5px;">
+                        <button class="approve-btn" onclick="actionOffboard('${r.id}','Approved')">Approve</button>
+                        <button class="deny-btn" onclick="actionOffboard('${r.id}','Denied')">Deny</button>
+                    </div>
+                 `;
+            }
+            
+            html += `
+                <div class="request-list-item">
+                    <div class="item-details">
+                        <h4>${r.type}: ${r.name}</h4>
+                        <p><strong>Exit Date:</strong> ${r.exitDate}</p>
+                        <p class="text-color-secondary">${r.reason}</p>
+                        <div style="font-size:0.8rem; margin-top:5px;">
+                            <span>Direct: ${r.directStatus}</span> | 
+                            <span>Project: ${r.projectStatus}</span> | 
+                            <span>HR: ${r.hrStatus}</span>
+                        </div>
+                    </div>
+                    <div class="item-actions">
+                        <span class="status-badge ${r.status==='Approved'?'status-approved':'status-pending'}">${r.status}</span>
+                        ${actions}
+                    </div>
+                </div>
+            `;
+        });
+        list.innerHTML = html;
+    }).webGetOffboardingRequests();
+}
+
+function actionOffboard(id, action) {
+    if(!confirm(action + " this request?")) return;
+    google.script.run.withSuccessHandler(msg => {
+        alert(msg);
+        loadOffboardingRequests();
+    }).webActionOffboarding(id, action, "");
 }
 
 
