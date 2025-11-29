@@ -1381,6 +1381,151 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
 .bar-Aux { background-color: #3b82f6; z-index: 2; }
 
 
+/* --- NEW TIMELINE GRID STYLES --- */
+.timeline-container {
+    position: relative;
+    width: 100%;
+    overflow-x: auto;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding-bottom: 10px;
+}
+
+/* The Time Scale Header (00:00 - 23:00) */
+.timeline-scale {
+    display: flex;
+    height: 30px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--input-bg);
+    min-width: 800px; /* Force scroll on small screens */
+    position: relative;
+}
+.scale-hour {
+    flex: 1; /* Distribute evenly */
+    border-right: 1px solid #e5e7eb;
+    font-size: 0.7rem;
+    color: var(--text-color-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: left;
+    padding-left: 4px;
+}
+/* 30-min Grid Lines Background */
+.timeline-grid-bg {
+    position: absolute;
+    top: 0; left: 0; bottom: 0; right: 0;
+    display: flex;
+    z-index: 0;
+    pointer-events: none;
+}
+.grid-col {
+    flex: 1;
+    border-right: 1px dashed #f3f4f6; /* Subtle 30min line */
+}
+.grid-col:nth-child(even) {
+    border-right: 1px solid #e5e7eb; /* Stronger Hour line */
+}
+
+/* Agent Row */
+.timeline-agent-row {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    min-width: 800px;
+}
+.timeline-agent-info {
+    width: 180px;
+    padding: 10px;
+    border-right: 1px solid var(--border-color);
+    background: var(--card-bg);
+    flex-shrink: 0;
+    position: sticky;
+    left: 0;
+    z-index: 10;
+    box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+}
+.timeline-track-area {
+    flex-grow: 1;
+    position: relative;
+    height: 50px;
+    background: transparent;
+}
+
+/* Bars */
+.t-bar {
+    position: absolute;
+    top: 10px;
+    height: 30px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    z-index: 2;
+    cursor: default;
+}
+.t-bar:hover { z-index: 5; transform: scaleY(1.1); }
+
+/* Status Colors */
+.t-work { background: #10b981; }
+.t-break { background: #f59e0b; }
+.t-lunch { background: #d97706; }
+.t-aux { background: #3b82f6; }
+.t-sched { 
+    background: repeating-linear-gradient(
+      45deg,
+      #e5e7eb,
+      #e5e7eb 10px,
+      #f3f4f6 10px,
+      #f3f4f6 20px
+    );
+    opacity: 0.6;
+    z-index: 1;
+    color: #666;
+    border: 1px dashed #9ca3af;
+}
+
+/* Adherence Flags */
+.t-flag {
+    position: absolute;
+    top: -5px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    z-index: 6;
+    cursor: help;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+.flag-late { background: #dc2626; } /* Red */
+.flag-early { background: #dc2626; }
+.flag-window { background: #7c3aed; } /* Purple */
+.flag-noshow { background: #000; } /* Black */
+
+/* Tooltip on hover */
+.t-flag:hover::after {
+    content: attr(data-msg);
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #333;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    z-index: 10;
+}
+
 
 
     </style>
@@ -8208,40 +8353,134 @@ function loadAnalyticsData() {
 }
 
 function renderAnalytics(data) {
-    // 1. Metrics
+    // 1. Metrics (Same as before)
     const m = data.metrics;
     document.getElementById('an-stat-adherence').innerText = `${m.adherence}%`;
     document.getElementById('an-stat-shrinkage').innerText = `${m.shrinkage}%`;
     document.getElementById('an-stat-lateness').innerText = `${m.latenessMins}m`;
     document.getElementById('an-stat-worked').innerText = `${m.workedHours}h`;
 
-    // 2. Heatmap
+    // 2. Timeline Grid Construction
     const container = document.getElementById('analytics-heatmap-container');
-    let html = '';
-    
     const dates = Object.keys(data.timeline).sort();
+    
     if (dates.length === 0) {
-        container.innerHTML = '<p class="text-color-secondary">No activity found for this period.</p>';
+        container.innerHTML = '<p class="text-color-secondary">No activity found.</p>';
         return;
     }
 
+    let html = '';
+
+    // A. Draw the Time Scale Header (Once per day block or top)
+    const renderScale = () => {
+        let scaleHtml = '<div class="timeline-scale">';
+        for (let i = 0; i < 24; i++) {
+            scaleHtml += `<div class="scale-hour">${i}:00</div>`;
+        }
+        scaleHtml += '</div>';
+        return scaleHtml;
+    };
+
+    // B. Draw Background Grid (48 columns for 30mins)
+    const renderBgGrid = () => {
+        let grid = '<div class="timeline-grid-bg">';
+        for (let i = 0; i < 48; i++) { // 24 hours * 2
+            grid += `<div class="grid-col"></div>`;
+        }
+        grid += '</div>';
+        return grid;
+    };
+
+    // Iterate Dates
     dates.forEach(date => {
+        html += `<h4 style="margin: 20px 0 10px 0; color:var(--konecta-blue); border-bottom:1px solid var(--border-color);">${date}</h4>`;
+        html += `<div class="timeline-container">`;
+        html += renderScale(); // 00:00 - 23:00 Header
+
         const agents = data.timeline[date];
-        for (const [agentName, events] of Object.entries(agents)) {
+        for (const [agentName, dataObj] of Object.entries(agents)) {
+            const sched = dataObj.schedule;
+            
             html += `
-                <div class="heatmap-row">
-                    <div class="heatmap-header">
-                        <span>${agentName}</span>
-                        <span class="text-color-secondary">${date}</span>
+                <div class="timeline-agent-row">
+                    <div class="timeline-agent-info">
+                        <strong>${agentName}</strong><br>
+                        <small class="text-color-secondary">${sched.type || 'Off'}</small>
+                        <br><small style="font-size:0.7rem;">${sched.start || ''} - ${sched.end || ''}</small>
                     </div>
-                    <div class="timeline-track">
-                        ${renderTimelineBars(events)}
+                    <div class="timeline-track-area">
+                        ${renderBgGrid()}
+                        ${renderAdvancedBars(dataObj)}
                     </div>
                 </div>
             `;
         }
+        html += `</div>`; // End Container
     });
+    
     container.innerHTML = html;
+}
+
+// NEW: Renders Ghost Schedule, Actuals, and Flags
+function renderAdvancedBars(dataObj) {
+    const events = dataObj.events;
+    const flags = dataObj.flags;
+    const sched = dataObj.schedule;
+    
+    let html = '';
+    
+    // Helper: Time (HH:mm) to Percentage (0-100%)
+    const getPos = (timeStr) => {
+        if (!timeStr) return null;
+        const [h, m] = timeStr.split(':').map(Number);
+        const totalMins = (h * 60) + m;
+        return (totalMins / 1440) * 100;
+    };
+
+    const getWidth = (start, end) => {
+        const s = getPos(start);
+        const e = getPos(end);
+        if (s === null || e === null) return 0;
+        let w = e - s;
+        if (w < 0) w = (100 - s) + getPos(end); // Overnight handling roughly
+        return w;
+    };
+
+    // 1. Render Ghost Schedule Bar (Background)
+    if (sched.start && sched.end) {
+        const left = getPos(sched.start);
+        const width = getWidth(sched.start, sched.end);
+        html += `<div class="t-bar t-sched" style="left:${left}%; width:${width}%;" title="Scheduled: ${sched.start}-${sched.end}">Scheduled</div>`;
+    }
+
+    // 2. Render Actual Activity Bars
+    events.forEach(ev => {
+        const left = getPos(ev.start);
+        const width = getWidth(ev.start, ev.end);
+        let cls = 't-work';
+        if (ev.type === 'Break') cls = 't-break';
+        if (ev.type === 'Lunch') cls = 't-lunch';
+        if (ev.type === 'Aux') cls = 't-aux';
+        
+        html += `<div class="t-bar ${cls}" style="left:${left}%; width:${width}%;" title="${ev.label}: ${ev.start} - ${ev.end}">${ev.label}</div>`;
+    });
+
+    // 3. Render Flags
+    flags.forEach(flag => {
+        const left = getPos(flag.time);
+        let icon = '!';
+        let cls = 'flag-late';
+        
+        if (flag.type === 'EarlyLeave') { icon = '🚪'; cls = 'flag-early'; }
+        if (flag.type === 'Adherence') { icon = '⚡'; cls = 'flag-window'; } // Break Violation
+        if (flag.type === 'NoShow') { icon = '🚫'; cls = 'flag-noshow'; }
+        if (flag.type === 'Lateness') { icon = '⏰'; }
+
+        // Adjust position slightly to not overlap exactly on the line
+        html += `<div class="t-flag ${cls}" style="left:calc(${left}% - 7px);" data-msg="${flag.msg}">${icon}</div>`;
+    });
+
+    return html;
 }
 
 // Helper to position bars based on time (00:00 to 24:00)
