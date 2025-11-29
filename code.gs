@@ -6549,6 +6549,218 @@ function executeOffboarding(ss, email, exitDate, reason) {
     }
 }
 
+
+// ==========================================
+// === PHASE 8: ANALYTICS & REPORTS ===
+// ==========================================
+
+/**
+ * Fetches data for the Visual Dashboard (Metrics + Timeline)
+ */
+function webGetAnalyticsData(filter) {
+  const { userEmail, userData, ss } = getAuthorizedContext('VIEW_FULL_DASHBOARD');
+  
+  // 1. Parse Dates
+  const startDate = new Date(filter.startDate);
+  const endDate = new Date(filter.endDate);
+  const targetEmail = filter.targetEmail; // Optional: Specific agent
+  
+  // 2. Data Sources
+  const adherenceData = getOrCreateSheet(ss, SHEET_NAMES.adherence).getDataRange().getValues();
+  const otherCodesData = getOrCreateSheet(ss, SHEET_NAMES.otherCodes).getDataRange().getValues();
+  const scheduleData = getOrCreateSheet(ss, SHEET_NAMES.schedule).getDataRange().getValues();
+  
+  // 3. Metrics Containers
+  let totalScheduledMins = 0;
+  let totalWorkedMins = 0;
+  let totalShrinkageMins = 0; // Late + Absent + Sick
+  let totalLateness = 0;
+  
+  // Timeline Data Structure
+  // { "2023-11-29": { "Agent Name": [ {type: 'Work', start: '09:00', end: '11:00'}, ... ] } }
+  const timeline = {}; 
+  
+  // Helper to parse HH:mm:ss string to minutes since midnight
+  const toMins = (timeStr) => {
+    if (!timeStr || typeof timeStr !== 'string') return 0;
+    const p = timeStr.split(':');
+    return parseInt(p[0])*60 + parseInt(p[1]);
+  };
+
+  // 4. Process Adherence Data
+  for (let i = 1; i < adherenceData.length; i++) {
+    const row = adherenceData[i];
+    const rowDate = new Date(row[0]);
+    const agentName = row[1];
+    const email = userData.nameToEmail[agentName];
+    
+    // Filter Logic
+    if (rowDate < startDate || rowDate > endDate) continue;
+    if (targetEmail && targetEmail !== 'ALL' && email !== targetEmail) continue;
+    if (!email) continue; // Skip unknown names
+
+    // --- A. Metrics Calculation ---
+    // NetLoginHours (Col 23/W -> Index 22)
+    const netHours = parseFloat(row[22]) || 0;
+    totalWorkedMins += (netHours * 60);
+    
+    const tardySec = parseFloat(row[10]) || 0;
+    totalLateness += (tardySec / 60);
+    
+    const leaveType = (row[13] || "").toLowerCase();
+    const isAbsent = (row[19] || "").toString().toLowerCase() === "yes";
+    
+    // Estimate Schedule (9 hours default if not found, just for aggregate stats)
+    const dailySchedMins = 540; // 9 hours
+    if (leaveType !== 'day off') {
+       totalScheduledMins += dailySchedMins;
+    }
+
+    if (isAbsent || (leaveType !== 'present' && leaveType !== 'day off' && leaveType !== '')) {
+       totalShrinkageMins += dailySchedMins;
+    }
+    totalShrinkageMins += (tardySec / 60);
+
+    // --- B. Timeline Construction (Heatmap) ---
+    const dateKey = convertDateToString(rowDate).split('T')[0];
+    if (!timeline[dateKey]) timeline[dateKey] = {};
+    if (!timeline[dateKey][agentName]) timeline[dateKey][agentName] = [];
+    
+    // Add Login Session
+    if (row[2] && row[9]) { // Login & Logout
+       timeline[dateKey][agentName].push({
+         type: 'Work',
+         label: 'Shift',
+         start: formatTime(row[2]),
+         end: formatTime(row[9])
+       });
+    }
+    
+    // Add Breaks (1st, Lunch, Last) - Overlays on Work
+    if (row[3] && row[4]) timeline[dateKey][agentName].push({ type: 'Break', label: '1st Break', start: formatTime(row[3]), end: formatTime(row[4]) });
+    if (row[5] && row[6]) timeline[dateKey][agentName].push({ type: 'Lunch', label: 'Lunch', start: formatTime(row[5]), end: formatTime(row[6]) });
+    if (row[7] && row[8]) timeline[dateKey][agentName].push({ type: 'Break', label: 'Last Break', start: formatTime(row[7]), end: formatTime(row[8]) });
+  }
+
+  // 5. Add AUX Codes to Timeline
+  for (let i = 1; i < otherCodesData.length; i++) {
+      const row = otherCodesData[i];
+      const rowDate = new Date(row[0]); // Date Col
+      const agentName = row[1];
+      const email = userData.nameToEmail[agentName];
+
+      if (rowDate < startDate || rowDate > endDate) continue;
+      if (targetEmail && targetEmail !== 'ALL' && email !== targetEmail) continue;
+      
+      const dateKey = convertDateToString(rowDate).split('T')[0];
+      
+      if (timeline[dateKey] && timeline[dateKey][agentName]) {
+          timeline[dateKey][agentName].push({
+              type: 'Aux',
+              label: row[2], // Code Name
+              start: formatTime(row[3]),
+              end: formatTime(row[4]) || "Active"
+          });
+      }
+  }
+
+  // 6. Final Scores
+  const adherenceScore = totalScheduledMins > 0 ? ((totalWorkedMins / totalScheduledMins) * 100).toFixed(1) : 100;
+  const shrinkageScore = totalScheduledMins > 0 ? ((totalShrinkageMins / totalScheduledMins) * 100).toFixed(1) : 0;
+
+  return {
+    metrics: {
+       adherence: adherenceScore,
+       shrinkage: shrinkageScore,
+       latenessMins: Math.round(totalLateness),
+       workedHours: (totalWorkedMins/60).toFixed(1)
+    },
+    timeline: timeline
+  };
+}
+
+/**
+ * Helper: Format date obj to HH:mm:ss string for timeline
+ */
+function formatTime(val) {
+  if (!val) return null;
+  if (val instanceof Date) return Utilities.formatDate(val, Session.getScriptTimeZone(), "HH:mm:ss");
+  // Handle strings
+  if (typeof val === 'string' && val.includes('T')) return val.split('T')[1].substring(0,8);
+  return val.toString().substring(0,8);
+}
+
+/**
+ * Generates Raw Data for Payroll CSV Export
+ */
+function webGetPayrollExportData(startDateStr, endDateStr, targetUserEmail) {
+  const { userEmail, userData, ss } = getAuthorizedContext('VIEW_FULL_DASHBOARD');
+  
+  const startDate = new Date(startDateStr);
+  const endDate = new Date(endDateStr);
+  
+  // 1. Fetch All Data Sources
+  const adherenceData = getOrCreateSheet(ss, SHEET_NAMES.adherence).getDataRange().getValues();
+  const otData = getOrCreateSheet(ss, SHEET_NAMES.overtime).getDataRange().getValues();
+  // const scheduleData = ... (Fetched inside loop via helper if needed, or rely on Adherence "Leave Type")
+
+  const exportRows = [];
+
+  // 2. Iterate Adherence (Primary Record of Day)
+  for (let i = 1; i < adherenceData.length; i++) {
+    const row = adherenceData[i];
+    const rowDate = new Date(row[0]);
+    const agentName = row[1];
+    const email = userData.nameToEmail[agentName];
+    
+    if (rowDate < startDate || rowDate > endDate) continue;
+    if (targetUserEmail && targetUserEmail !== 'ALL' && email !== targetUserEmail) continue;
+
+    // 3. Find Approved Overtime for this day
+    let approvedOTHours = 0;
+    let otType = "";
+    const dateStr = convertDateToString(rowDate).split('T')[0];
+    
+    // Look in OT Sheet
+    for(let j=1; j<otData.length; j++) {
+        // Col 1 = EmpID. We need to map or check name/date.
+        // Better: user list map.
+        const otEmpID = otData[j][1];
+        const otUser = userData.userList.find(u => u.empID === otEmpID);
+        
+        if(otUser && otUser.email === email) {
+            const otDate = new Date(otData[j][3]);
+            const otDateStr = convertDateToString(otDate).split('T')[0];
+            
+            if (otDateStr === dateStr && otData[j][8] === 'Approved') {
+                approvedOTHours += parseFloat(otData[j][6] || 0);
+                otType = otData[j][12]; // Pre/Post/WorkDayOff
+            }
+        }
+    }
+
+    // 4. Build Row Object
+    exportRows.push({
+        Date: dateStr,
+        Name: agentName,
+        Email: email,
+        Status: row[13], // Leave Type (Present, Absent, Sick...)
+        Login: formatTime(row[2]),
+        Logout: formatTime(row[9]),
+        NetWorkedHours: (parseFloat(row[22]) || 0).toFixed(2),
+        LatenessMins: Math.round((row[10]||0)/60),
+        EarlyLeaveMins: Math.round((row[12]||0)/60),
+        BreakExceedMins: Math.round(((row[16]||0) + (row[18]||0))/60),
+        LunchExceedMins: Math.round((row[17]||0)/60),
+        ApprovedOTHours: approvedOTHours.toFixed(2),
+        OTType: otType,
+        IsAbsent: row[19]
+    });
+  }
+  
+  return exportRows;
+}
+
 //.............................................................................................................................
 
 
