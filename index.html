@@ -2555,7 +2555,7 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
   </div>
 
         <!-- ================================== -->
-        <!--  TAB 1: offboarding PANEL -->
+        <!--  TAB 18: offboarding PANEL -->
         <!-- ================================== -->
 
   <div id="offboarding-panel" class="tab-panel">
@@ -2805,7 +2805,7 @@ function showTab(tabName) {
       loadHrAdmin(); // New Phase 7 Function
     } else if (tabName === 'overtime') {
     loadOvertimeTab();
-    } else if (tabName === 'admin-tools') {
+    }  else if (tabName === 'admin-tools') {
       // ... existing dropdown population ...
       populateAdminDropdown(allUsersList, selfUserName, 'manual-punch-user', 'Select User');
       // ... other dropdowns ...
@@ -2841,7 +2841,9 @@ function showTab(tabName) {
     loadAnnouncements_Admin();
   } else if (tabName === 'recruitment') {
     loadRecruitmentAdmin();
-  }
+  }else if (tabName === 'offboarding') {
+       loadOffboardingTab();
+     }
 }      
       // --- Refresh User Info ---
       function refreshCurrentData() {
@@ -7964,45 +7966,58 @@ function submitTermination() {
 
 function loadOffboardingRequests() {
     const list = document.getElementById('offboarding-list');
-    list.innerHTML = 'Loading...';
+    list.innerHTML = '<p class="text-color-secondary">Loading requests...</p>';
     
-    google.script.run.withSuccessHandler(reqs => {
-        if(reqs.length === 0) { list.innerHTML = "No pending requests."; return; }
-        let html = '';
-        reqs.forEach(r => {
-            let actions = '';
-            // Logic: Show Approve/Deny if user is authorized and status is pending them
-            // Simplified for brevity: Check role
-            if (['admin','superadmin','manager','project_manager'].includes(selfRole) && r.status !== 'Approved' && r.status !== 'Denied') {
-                 actions = `
-                    <div style="margin-top:5px;">
-                        <button class="approve-btn" onclick="actionOffboard('${r.id}','Approved')">Approve</button>
-                        <button class="deny-btn" onclick="actionOffboard('${r.id}','Denied')">Deny</button>
-                    </div>
-                 `;
+    google.script.run
+        .withSuccessHandler(reqs => {
+            if (!reqs || reqs.length === 0) { 
+                list.innerHTML = '<p class="text-color-secondary">No pending offboarding requests found.</p>'; 
+                return; 
             }
             
-            html += `
-                <div class="request-list-item">
-                    <div class="item-details">
-                        <h4>${r.type}: ${r.name}</h4>
-                        <p><strong>Exit Date:</strong> ${r.exitDate}</p>
-                        <p class="text-color-secondary">${r.reason}</p>
-                        <div style="font-size:0.8rem; margin-top:5px;">
-                            <span>Direct: ${r.directStatus}</span> | 
-                            <span>Project: ${r.projectStatus}</span> | 
-                            <span>HR: ${r.hrStatus}</span>
+            let html = '';
+            reqs.forEach(r => {
+                let actions = '';
+                // Show buttons if allowed
+                if (['admin','superadmin','manager','project_manager'].includes(selfRole) && r.status !== 'Approved' && r.status !== 'Denied') {
+                     actions = `
+                        <div style="margin-top:8px;">
+                            <button class="approve-btn" onclick="actionOffboard('${r.id}','Approved')">Approve</button>
+                            <button class="deny-btn" onclick="actionOffboard('${r.id}','Denied')">Deny</button>
+                        </div>
+                     `;
+                }
+                
+                let statusClass = 'status-pending';
+                if (r.status === 'Approved') statusClass = 'status-approved';
+                if (r.status === 'Denied') statusClass = 'status-denied';
+                
+                html += `
+                    <div class="request-list-item">
+                        <div class="item-details">
+                            <h4>${r.type}: ${r.name}</h4>
+                            <p><strong>Exit Date:</strong> ${r.exitDate}</p>
+                            <p class="text-color-secondary">${r.reason}</p>
+                            <div style="font-size:0.8rem; margin-top:5px; display:flex; gap:10px;">
+                                <span style="color:${r.directStatus==='Approved'?'green':'orange'}">Direct: ${r.directStatus}</span>
+                                <span style="color:${r.projectStatus==='Approved'?'green':'orange'}">Project: ${r.projectStatus}</span>
+                                <span style="color:${r.hrStatus==='Approved'?'green':'orange'}">HR: ${r.hrStatus}</span>
+                            </div>
+                        </div>
+                        <div class="item-actions">
+                            <span class="status-badge ${statusClass}">${r.status}</span>
+                            ${actions}
                         </div>
                     </div>
-                    <div class="item-actions">
-                        <span class="status-badge ${r.status==='Approved'?'status-approved':'status-pending'}">${r.status}</span>
-                        ${actions}
-                    </div>
-                </div>
-            `;
-        });
-        list.innerHTML = html;
-    }).webGetOffboardingRequests();
+                `;
+            });
+            list.innerHTML = html;
+        })
+        .withFailureHandler(err => {
+            // Show the error on screen
+            list.innerHTML = `<p class="status-message error visible">Error loading requests: ${err.message}</p>`;
+        })
+        .webGetOffboardingRequests();
 }
 
 function actionOffboard(id, action) {
