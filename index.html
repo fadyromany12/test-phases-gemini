@@ -1296,14 +1296,14 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
       
     #mobile-blocker {
-        display: none; /* Hidden by default on desktop */
+        display: none; /* Hidden by default */
         position: fixed;
         top: 0;
         left: 0;
         width: 100vw;
         height: 100vh;
         background-color: var(--page-bg);
-        z-index: 2147483647; /* Max z-index to cover everything */
+        z-index: 2147483647; /* Max z-index */
         flex-direction: column;
         align-items: center;
         justify-content: center;
@@ -1311,22 +1311,31 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
         padding: 40px;
       }
 
-      /* Trigger on screens narrower than 768px (Standard Phones/Tablets) */
+      /* 1. Standard CSS Check (for normal mobile view)
+         2. JS-Enforced Class (for "Desktop Site" bypassers)
+      */
       @media (max-width: 768px) {
-        /* Force hide the app interface */
-        header, .app-container, footer, #app-loader, .modal-backdrop, .modal {
-          display: none !important;
-        }
-        
-        /* Show the blocker */
-        #mobile-blocker {
-          display: flex !important;
-        }
-        
-        /* Disable scrolling on body */
-        body {
-          overflow: hidden !important;
-        }
+        body .app-container, body header, body footer, body #app-loader, body .modal-backdrop, body .modal { display: none !important; }
+        body #mobile-blocker { display: flex !important; }
+        body { overflow: hidden !important; }
+      }
+
+      /* Force block if JS detects mobile device regardless of screen width */
+      body.force-mobile-block .app-container, 
+      body.force-mobile-block header, 
+      body.force-mobile-block footer, 
+      body.force-mobile-block #app-loader,
+      body.force-mobile-block .modal-backdrop,
+      body.force-mobile-block .modal { 
+        display: none !important; 
+      }
+      
+      body.force-mobile-block #mobile-blocker { 
+        display: flex !important; 
+      }
+      
+      body.force-mobile-block { 
+        overflow: hidden !important; 
       }
       /* [END] NEW: Mobile Restriction Styles */
 
@@ -1345,13 +1354,14 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
   ==================================================================
   -->
   <body>
+    
     <div id="mobile-blocker">
       <div class="logo-container" style="margin-bottom: 24px; width: 180px; height: 60px; background: #fff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
           <img class="header-logo" src="https://image2url.com/images/1762976595272-13dc7db5-88f2-48e6-bffb-39d4830812e5.png" alt="Konecta Logo">
       </div>
-      <h2 style="font-size: 1.5rem; color: var(--text-color); margin-bottom: 12px;">Desktop Access Required</h2>
+      <h2 style="font-size: 1.5rem; color: var(--text-color); margin-bottom: 12px;">Konecta PC Access Required</h2>
       <p style="color: var(--text-color-secondary); font-size: 1rem; max-width: 320px; line-height: 1.5;">
-        KOMPASS is optimized for workstation use. <br>Please access this tool from a laptop or desktop computer.
+        KOMPASS is optimized for workstation use. <br>Please access this tool from a Konecta laptop or desktop computer.
       </p>
     </div>
     
@@ -2590,6 +2600,41 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
 
 
     <script>
+
+      
+      (function() {
+      // Robust Mobile Detection Function
+      function isMobileDevice() {
+        // 1. Check User Agent strings (standard detection)
+        var ua = navigator.userAgent || navigator.vendor || window.opera;
+        var mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+        if (mobileRegex.test(ua)) return true;
+
+        // 2. Check Physical Screen Dimensions 
+        // "Desktop Site" mode fakes window.innerWidth, but rarely fakes window.screen.width.
+        // Most phones have a physical width < 600px (CSS pixels). Tablets < 900px.
+        // We set a cutoff. 1024px is a safe bet for "Desktops/Laptops".
+        if (window.screen.width < 900 || window.screen.height < 600) {
+          return true;
+        }
+
+        // 3. Touch Point Heuristic (Optional but powerful)
+        // If it has touch points AND screen width is somewhat small (e.g. tablet in landscape)
+        // This catches iPads in Desktop Mode.
+        if (navigator.maxTouchPoints > 0 && window.screen.width < 1024) {
+          return true;
+        }
+
+        return false;
+      }
+
+      // Apply block immediately if detected
+      if (isMobileDevice()) {
+        document.body.classList.add('force-mobile-block');
+      }
+    })();
+
+
       // --- MODIFIED PHASE 3: Changed const to let for dynamic updates ---
       let PLANNED_BREAK_SECONDS = 15 * 60; 
       let PLANNED_LUNCH_SECONDS = 30 * 60;
