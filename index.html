@@ -1441,7 +1441,7 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
           </button>
 
           <button id="offboarding-tab-button" class="tab-button" onclick="showTab('offboarding')">
-            <span class="nav-icon">🚪</span>
+            <span class="nav-icon">🚩</span>
             <span class="nav-button-text">Offboarding</span>
           </button>
 
@@ -2490,8 +2490,6 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
   </div>
 
   <br>
-
-  <br>
   
 
 </div>
@@ -2553,6 +2551,7 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
         </select>
     </div>
   </div>
+  <div id="ot-request-list" class="request-list">Loading...</div> </div>
 
         <!-- ================================== -->
         <!--  TAB 18: offboarding PANEL -->
@@ -3065,8 +3064,8 @@ function populateAdminDropdown(users, selfName, dropdownId, selfText, defaultVal
     'offboard-user-select': 'offboard-user-select-container',
     'hr-balance-user-select': 'hr-balance-user-select-container',
     'hr-offboard-user-select': 'hr-offboard-user-select-container',
-    'ot-employee-select': 'ot-employee-select-container',
-    // Inside populateAdminDropdown map:
+    'ot-employee-select': 'ot-employee-select-container', // 
+    'offboard-term-user': 'offboard-term-user-container', // 
     'reporting-line-pm': 'reporting-line-pm-container',
     'finance-apply': 'fin-apply-users-container'
   };
@@ -7931,12 +7930,14 @@ function loadProjectDashboardData() {
 }
 
 function loadOffboardingTab() {
-    // Populate dropdown for termination
+    // Populate dropdown for termination if the user is a manager/admin
     if (['admin','superadmin','manager','project_manager'].includes(selfRole)) {
         populateAdminDropdown(allUsersList, selfUserName, 'offboard-term-user', 'Select Employee');
-        document.getElementById('offboard-initiate-section').style.display = 'block';
+        const section = document.getElementById('offboard-initiate-section');
+        if (section) section.style.display = 'block';
     } else {
-        document.getElementById('offboard-initiate-section').style.display = 'none';
+        const section = document.getElementById('offboard-initiate-section');
+        if (section) section.style.display = 'none';
     }
     loadOffboardingRequests();
 }
