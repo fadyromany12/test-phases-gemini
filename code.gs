@@ -6559,122 +6559,211 @@ function executeOffboarding(ss, email, exitDate, reason) {
  */
 function webGetAnalyticsData(filter) {
   const { userEmail, userData, ss } = getAuthorizedContext('VIEW_FULL_DASHBOARD');
-  
-  // 1. Parse Dates
   const startDate = new Date(filter.startDate);
   const endDate = new Date(filter.endDate);
-  const targetEmail = filter.targetEmail; // Optional: Specific agent
-  
-  // 2. Data Sources
+  const targetEmail = filter.targetEmail;
+  const timeZone = Session.getScriptTimeZone();
+
+  // 1. Fetch Data Sources
   const adherenceData = getOrCreateSheet(ss, SHEET_NAMES.adherence).getDataRange().getValues();
   const otherCodesData = getOrCreateSheet(ss, SHEET_NAMES.otherCodes).getDataRange().getValues();
-  const scheduleData = getOrCreateSheet(ss, SHEET_NAMES.schedule).getDataRange().getValues();
-  
-  // 3. Metrics Containers
+  const scheduleSheet = getOrCreateSheet(ss, SHEET_NAMES.schedule);
+  const scheduleData = scheduleSheet.getDataRange().getValues();
+  const otData = getOrCreateSheet(ss, SHEET_NAMES.overtime).getDataRange().getValues();
+
+  // 2. Metrics Containers
   let totalScheduledMins = 0;
   let totalWorkedMins = 0;
-  let totalShrinkageMins = 0; // Late + Absent + Sick
+  let totalShrinkageMins = 0;
   let totalLateness = 0;
   
-  // Timeline Data Structure
-  // { "2023-11-29": { "Agent Name": [ {type: 'Work', start: '09:00', end: '11:00'}, ... ] } }
-  const timeline = {}; 
+  // Timeline Data Structure: { "YYYY-MM-DD": { "Agent Name": { events: [], flags: [], schedule: {} } } }
+  const timeline = {};
+
+  // --- HELPER: Build Schedule Map for fast lookup ---
+  // Map Key: "email_dateString" -> Value: { start, end, b1s, b1e, ls, le, ... }
+  const scheduleMap = {};
   
-  // Helper to parse HH:mm:ss string to minutes since midnight
-  const toMins = (timeStr) => {
-    if (!timeStr || typeof timeStr !== 'string') return 0;
-    const p = timeStr.split(':');
-    return parseInt(p[0])*60 + parseInt(p[1]);
+  for (let i = 1; i < scheduleData.length; i++) {
+    const row = scheduleData[i];
+    const sEmail = (row[6] || "").toLowerCase();
+    const sDate = parseDate(row[1]); // Helper from before
+    if (!sEmail || !sDate) continue;
+    
+    const dateKey = Utilities.formatDate(sDate, timeZone, "yyyy-MM-dd");
+    const uniqueKey = `${sEmail}_${dateKey}`;
+    
+    // Parse Times (Handle Date objects or strings)
+    const fmt = (v) => {
+      if (!v) return null;
+      if (v instanceof Date) return Utilities.formatDate(v, timeZone, "HH:mm");
+      return v.toString().substring(0, 5); // "09:00"
+    };
+
+    scheduleMap[uniqueKey] = {
+      type: row[5], // Leave Type
+      start: fmt(row[2]),
+      end: fmt(row[4]),
+      b1_start: fmt(row[7]), // Col H
+      b1_end: fmt(row[8]),   // Col I
+      l_start: fmt(row[9]),  // Col J
+      l_end: fmt(row[10]),   // Col K
+      b2_start: fmt(row[11]), // Col L
+      b2_end: fmt(row[12])    // Col M
+    };
+  }
+
+  // --- HELPER: Parse Time String to Decimal Hours (e.g. "09:30" -> 9.5) ---
+  const toDec = (t) => {
+    if (!t) return null;
+    const [h, m] = t.split(':').map(Number);
+    return h + (m / 60);
   };
 
-  // 4. Process Adherence Data
+  // 3. Process Adherence (Actuals)
   for (let i = 1; i < adherenceData.length; i++) {
     const row = adherenceData[i];
     const rowDate = new Date(row[0]);
     const agentName = row[1];
     const email = userData.nameToEmail[agentName];
     
-    // Filter Logic
     if (rowDate < startDate || rowDate > endDate) continue;
     if (targetEmail && targetEmail !== 'ALL' && email !== targetEmail) continue;
-    if (!email) continue; // Skip unknown names
+    if (!email) continue;
 
-    // --- A. Metrics Calculation ---
-    // NetLoginHours (Col 23/W -> Index 22)
-    const netHours = parseFloat(row[22]) || 0;
-    totalWorkedMins += (netHours * 60);
-    
-    const tardySec = parseFloat(row[10]) || 0;
-    totalLateness += (tardySec / 60);
-    
-    const leaveType = (row[13] || "").toLowerCase();
-    const isAbsent = (row[19] || "").toString().toLowerCase() === "yes";
-    
-    // Estimate Schedule (9 hours default if not found, just for aggregate stats)
-    const dailySchedMins = 540; // 9 hours
-    if (leaveType !== 'day off') {
-       totalScheduledMins += dailySchedMins;
+    const dateStr = Utilities.formatDate(rowDate, timeZone, "yyyy-MM-dd");
+    const schedKey = `${email}_${dateStr}`;
+    const sched = scheduleMap[schedKey] || { type: 'Day Off' };
+
+    // Initialize Timeline Entry
+    if (!timeline[dateStr]) timeline[dateStr] = {};
+    if (!timeline[dateStr][agentName]) {
+      timeline[dateStr][agentName] = { 
+        events: [], 
+        flags: [], 
+        schedule: sched // Attach schedule for ghost bar
+      };
     }
 
-    if (isAbsent || (leaveType !== 'present' && leaveType !== 'day off' && leaveType !== '')) {
-       totalShrinkageMins += dailySchedMins;
+    // --- A. Metrics Calculation ---
+    const netHours = parseFloat(row[22]) || 0;
+    totalWorkedMins += (netHours * 60);
+    const tardySec = parseFloat(row[10]) || 0;
+    totalLateness += (tardySec / 60);
+    const leaveType = (row[13] || "").toLowerCase();
+    
+    if (leaveType !== 'day off') totalScheduledMins += 540; // 9h est
+    if (leaveType === 'absent' || (leaveType !== 'present' && leaveType !== 'day off' && leaveType !== '')) {
+       totalShrinkageMins += 540;
     }
     totalShrinkageMins += (tardySec / 60);
 
-    // --- B. Timeline Construction (Heatmap) ---
-    const dateKey = convertDateToString(rowDate).split('T')[0];
-    if (!timeline[dateKey]) timeline[dateKey] = {};
-    if (!timeline[dateKey][agentName]) timeline[dateKey][agentName] = [];
+    // --- B. Timeline Events (Actuals) ---
+    const formatT = (v) => {
+        if (!v) return null;
+        if (v instanceof Date) return Utilities.formatDate(v, timeZone, "HH:mm");
+        return v.toString().substring(0, 8); // remove seconds maybe
+    };
+
+    const login = formatT(row[2]);
+    const logout = formatT(row[9]);
     
-    // Add Login Session
-    if (row[2] && row[9]) { // Login & Logout
-       timeline[dateKey][agentName].push({
-         type: 'Work',
-         label: 'Shift',
-         start: formatTime(row[2]),
-         end: formatTime(row[9])
-       });
+    // 1. Work Session
+    if (login && logout) {
+       timeline[dateStr][agentName].events.push({ type: 'Work', start: login, end: logout, label: 'Shift' });
     }
+
+    // 2. Breaks
+    const addBreak = (inT, outT, type, label) => {
+        const s = formatT(inT);
+        const e = formatT(outT);
+        if (s && e) {
+            timeline[dateStr][agentName].events.push({ type: type, start: s, end: e, label: label });
+            return { start: s, end: e };
+        }
+        return null;
+    };
+
+    const actB1 = addBreak(row[3], row[4], 'Break', '1st Break');
+    const actLunch = addBreak(row[5], row[6], 'Lunch', 'Lunch');
+    const actB2 = addBreak(row[7], row[8], 'Break', 'Last Break');
+
+    // --- C. ADHERENCE FLAGGING LOGIC ---
     
-    // Add Breaks (1st, Lunch, Last) - Overlays on Work
-    if (row[3] && row[4]) timeline[dateKey][agentName].push({ type: 'Break', label: '1st Break', start: formatTime(row[3]), end: formatTime(row[4]) });
-    if (row[5] && row[6]) timeline[dateKey][agentName].push({ type: 'Lunch', label: 'Lunch', start: formatTime(row[5]), end: formatTime(row[6]) });
-    if (row[7] && row[8]) timeline[dateKey][agentName].push({ type: 'Break', label: 'Last Break', start: formatTime(row[7]), end: formatTime(row[8]) });
+    // 1. Lateness
+    if (sched.start && login) {
+        if (toDec(login) > toDec(sched.start) + (5/60)) { // 5 min buffer
+            timeline[dateStr][agentName].flags.push({ type: 'Lateness', time: sched.start, msg: `Late: Login at ${login}` });
+        }
+    }
+
+    // 2. Early Leave
+    if (sched.end && logout) {
+        if (toDec(logout) < toDec(sched.end) - (5/60)) { // 5 min buffer
+            timeline[dateStr][agentName].flags.push({ type: 'EarlyLeave', time: logout, msg: `Early Leave: Out at ${logout}` });
+        }
+    }
+
+    // 3. No Show (Scheduled Present, but no Login)
+    if (sched.type === 'Present' && !login && leaveType !== 'Sick' && leaveType !== 'Annual') {
+        timeline[dateStr][agentName].flags.push({ type: 'NoShow', time: '09:00', msg: 'No Show / Absent' });
+    }
+
+    // 4. Break Window Violation
+    // Logic: If actual start is BEFORE scheduled start OR actual start is AFTER scheduled end
+    const checkWindow = (actual, sStart, sEnd, name) => {
+        if (actual && sStart && sEnd) {
+            const actStart = toDec(actual.start);
+            const winStart = toDec(sStart);
+            const winEnd = toDec(sEnd);
+            
+            // Note: Window definition in Schedule sheet usually means "Window Start" and "Window End"
+            // If the user takes a break *starting* outside this window
+            if (actStart < winStart || actStart > winEnd) {
+                timeline[dateStr][agentName].flags.push({ 
+                    type: 'Adherence', 
+                    time: actual.start, 
+                    msg: `${name} out of window (${sStart}-${sEnd})` 
+                });
+            }
+        }
+    };
+
+    checkWindow(actB1, sched.b1_start, sched.b1_end, "1st Break");
+    checkWindow(actLunch, sched.l_start, sched.l_end, "Lunch");
+    checkWindow(actB2, sched.b2_start, sched.b2_end, "Last Break");
   }
 
-  // 5. Add AUX Codes to Timeline
+  // 4. Process AUX Codes (Overlay)
   for (let i = 1; i < otherCodesData.length; i++) {
       const row = otherCodesData[i];
-      const rowDate = new Date(row[0]); // Date Col
+      const rowDate = new Date(row[0]);
       const agentName = row[1];
       const email = userData.nameToEmail[agentName];
-
       if (rowDate < startDate || rowDate > endDate) continue;
       if (targetEmail && targetEmail !== 'ALL' && email !== targetEmail) continue;
       
-      const dateKey = convertDateToString(rowDate).split('T')[0];
+      const dateStr = Utilities.formatDate(rowDate, timeZone, "yyyy-MM-dd");
       
-      if (timeline[dateKey] && timeline[dateKey][agentName]) {
-          timeline[dateKey][agentName].push({
-              type: 'Aux',
-              label: row[2], // Code Name
-              start: formatTime(row[3]),
-              end: formatTime(row[4]) || "Active"
-          });
+      // Ensure structure exists (if they had aux but no login)
+      if (!timeline[dateStr]) timeline[dateStr] = {};
+      if (!timeline[dateStr][agentName]) timeline[dateStr][agentName] = { events: [], flags: [], schedule: {} };
+
+      const formatT = (v) => (v instanceof Date) ? Utilities.formatDate(v, timeZone, "HH:mm") : null;
+      const s = formatT(row[3]);
+      const e = formatT(row[4]) || formatT(new Date()); // If active, use now
+
+      if (s) {
+          timeline[dateStr][agentName].events.push({ type: 'Aux', start: s, end: e, label: row[2] });
       }
   }
 
-  // 6. Final Scores
+  // 5. Calculate Score
   const adherenceScore = totalScheduledMins > 0 ? ((totalWorkedMins / totalScheduledMins) * 100).toFixed(1) : 100;
   const shrinkageScore = totalScheduledMins > 0 ? ((totalShrinkageMins / totalScheduledMins) * 100).toFixed(1) : 0;
 
   return {
-    metrics: {
-       adherence: adherenceScore,
-       shrinkage: shrinkageScore,
-       latenessMins: Math.round(totalLateness),
-       workedHours: (totalWorkedMins/60).toFixed(1)
-    },
+    metrics: { adherence: adherenceScore, shrinkage: shrinkageScore, latenessMins: Math.round(totalLateness), workedHours: (totalWorkedMins/60).toFixed(1) },
     timeline: timeline
   };
 }
