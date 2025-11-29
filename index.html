@@ -1339,6 +1339,50 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
       }
       /* [END] NEW: Mobile Restriction Styles */
 
+      /* Heatmap Styles */
+.heatmap-row {
+    margin-bottom: 15px;
+    background: var(--card-bg);
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+}
+.heatmap-header {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+}
+.timeline-track {
+    position: relative;
+    height: 30px;
+    background-color: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+    width: 100%;
+}
+.timeline-bar {
+    position: absolute;
+    height: 100%;
+    top: 0;
+    font-size: 0.7rem;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    white-space: nowrap;
+}
+/* Colors */
+.bar-Work { background-color: #10b981; z-index: 1; }
+.bar-Break { background-color: #f59e0b; z-index: 2; }
+.bar-Lunch { background-color: #f59e0b; z-index: 2; }
+.bar-Aux { background-color: #3b82f6; z-index: 2; }
+
+
+
+
     </style>
   </head>
   
@@ -1477,6 +1521,11 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
             <span class="nav-icon">💰</span>
             <span class="nav-button-text">Finance Admin</span>
           </button>
+
+          <button id="analytics-tab-button" class="tab-button" onclick="showTab('analytics')">
+  <span class="nav-icon">📊</span>
+  <span class="nav-button-text">Analytics</span>
+</button>
           <button id="schedule-tab-button" class="tab-button" onclick="showTab('schedule')">
             <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M19 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path><path d="M12 12h-4v4h4v-4z"></path><path d="M16 2v4"></path><path d="M8 2v4"></path><path d="M3 10h18"></path></svg>
             <span class="nav-button-text">Schedule Editor</span>
@@ -2582,6 +2631,66 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
   </div>
   <div id="offboarding-list" class="request-list">Loading...</div>
 </div>
+
+
+
+        <!-- ================================== -->
+        <!--  TAB 18: Analytics PANEL -->
+        <!-- ================================== -->
+
+
+<div id="analytics-panel" class="tab-panel">
+  <h2>Enterprise Reports & Analytics</h2>
+  
+  <div class="form-container" style="display:flex; gap:15px; flex-wrap:wrap; align-items:flex-end; background:var(--input-bg);">
+      <div class="form-group" style="flex:1; min-width:200px;">
+          <label>Select User</label>
+          <div id="analytics-user-select-container"></div>
+      </div>
+
+      <div class="form-group">
+          <label>From</label>
+          <input type="date" id="an-start-date">
+      </div>
+      <div class="form-group">
+          <label>To</label>
+          <input type="date" id="an-end-date">
+      </div>
+
+      <div class="form-group" style="display: flex; gap: 10px;">
+        <button type="button" class="btn-primary" onclick="loadAnalyticsData()">Generate Report</button>
+        <button type="button" class="export-btn" onclick="downloadPayrollReport()">📥 Export CSV</button>
+      </div>
+  </div>
+
+  <div id="analytics-status" class="status-message"></div>
+
+  <hr class="section-divider">
+
+  <div id="command-center-stats" style="margin-bottom:30px;">
+      <div class="metric-card">
+          <span class="metric-title">Adherence</span>
+          <span class="metric-value" id="an-stat-adherence">--%</span>
+      </div>
+      <div class="metric-card">
+          <span class="metric-title">Shrinkage</span>
+          <span class="metric-value" id="an-stat-shrinkage">--%</span>
+      </div>
+      <div class="metric-card">
+          <span class="metric-title">Total Lateness</span>
+          <span class="metric-value" id="an-stat-lateness">0m</span>
+      </div>
+      <div class="metric-card">
+          <span class="metric-title">Worked Hours</span>
+          <span class="metric-value" id="an-stat-worked">0h</span>
+      </div>
+  </div>
+
+  <h3 style="margin-bottom:15px;">Activity Timeline (Heatmap)</h3>
+  <div id="analytics-heatmap-container" class="request-list" style="min-height:200px;">
+      <p class="text-color-secondary">Select criteria and click "Generate Report" to view timeline.</p>
+  </div>
+</div>
         
       </main> <!-- End #app-content -->
       
@@ -2842,7 +2951,9 @@ function showTab(tabName) {
     loadRecruitmentAdmin();
   }else if (tabName === 'offboarding') {
        loadOffboardingTab();
-     }
+     } else if (tabName === 'analytics') {
+    loadAnalyticsTab();
+  }
 }      
       // --- Refresh User Info ---
       function refreshCurrentData() {
@@ -3067,7 +3178,8 @@ function populateAdminDropdown(users, selfName, dropdownId, selfText, defaultVal
     'ot-employee-select': 'ot-employee-select-container', // 
     'offboard-term-user': 'offboard-term-user-container', // 
     'reporting-line-pm': 'reporting-line-pm-container',
-    'finance-apply': 'fin-apply-users-container'
+    'finance-apply': 'fin-apply-users-container',
+    'analytics-user': 'analytics-user-select-container'
   };
 
   // Special Handling for History (Multi-Select)
@@ -8027,6 +8139,178 @@ function actionOffboard(id, action) {
         alert(msg);
         loadOffboardingRequests();
     }).webActionOffboarding(id, action, "");
+}
+
+
+// [index.html] REPLACE loadAnalyticsTab
+function loadAnalyticsTab() {
+    // 1. Initialize User Select
+    if (['admin','superadmin','manager','project_manager'].includes(selfRole)) {
+        // Admin View: Dropdown with "All Users" default
+        populateAdminDropdown(allUsersList, selfUserName, 'analytics-user', 'All Users (Aggregate)', 'ALL');
+    } else {
+        // Agent View: Locked to self
+        const container = document.getElementById('analytics-user-select-container');
+        const myEmail = allUsersList.find(u => u.name === selfUserName)?.email || selfUserName;
+        
+        container.innerHTML = `
+            <input type="hidden" id="analytics-user" value="${myEmail}">
+            <div style="padding: 10px; background: var(--input-bg); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-color-secondary);">
+                Locked: <strong>${selfUserName}</strong>
+            </div>`;
+    }
+    
+    // 2. Set Default Dates
+    const today = new Date();
+    const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+    document.getElementById('an-start-date').valueAsDate = firstDay;
+    document.getElementById('an-end-date').valueAsDate = today;
+    
+    setStatus('analytics-status', '', '');
+}
+
+function loadAnalyticsData() {
+    const user = document.getElementById('analytics-user').value;
+    const start = document.getElementById('an-start-date').value;
+    const end = document.getElementById('an-end-date').value;
+
+    // 1. Validation
+    if (!start || !end) {
+        setStatus('analytics-status', 'error', 'Please select both Start and End dates.');
+        return;
+    }
+    if (!user) {
+        setStatus('analytics-status', 'error', 'Please select a User (or All Users).');
+        return;
+    }
+    if (new Date(end) < new Date(start)) {
+        setStatus('analytics-status', 'error', 'End Date cannot be before Start Date.');
+        return;
+    }
+
+    const filter = {
+        startDate: start,
+        endDate: end,
+        targetEmail: user
+    };
+
+    setStatus('analytics-status', 'processing', 'Crunching numbers... please wait.');
+    
+    google.script.run
+        .withSuccessHandler(data => {
+            setStatus('analytics-status', 'success', 'Report generated successfully.');
+            renderAnalytics(data);
+        })
+        .withFailureHandler(err => {
+            setStatus('analytics-status', 'error', err.message);
+        })
+        .webGetAnalyticsData(filter);
+}
+
+function renderAnalytics(data) {
+    // 1. Metrics
+    const m = data.metrics;
+    document.getElementById('an-stat-adherence').innerText = `${m.adherence}%`;
+    document.getElementById('an-stat-shrinkage').innerText = `${m.shrinkage}%`;
+    document.getElementById('an-stat-lateness').innerText = `${m.latenessMins}m`;
+    document.getElementById('an-stat-worked').innerText = `${m.workedHours}h`;
+
+    // 2. Heatmap
+    const container = document.getElementById('analytics-heatmap-container');
+    let html = '';
+    
+    const dates = Object.keys(data.timeline).sort();
+    if (dates.length === 0) {
+        container.innerHTML = '<p class="text-color-secondary">No activity found for this period.</p>';
+        return;
+    }
+
+    dates.forEach(date => {
+        const agents = data.timeline[date];
+        for (const [agentName, events] of Object.entries(agents)) {
+            html += `
+                <div class="heatmap-row">
+                    <div class="heatmap-header">
+                        <span>${agentName}</span>
+                        <span class="text-color-secondary">${date}</span>
+                    </div>
+                    <div class="timeline-track">
+                        ${renderTimelineBars(events)}
+                    </div>
+                </div>
+            `;
+        }
+    });
+    container.innerHTML = html;
+}
+
+// Helper to position bars based on time (00:00 to 24:00)
+function renderTimelineBars(events) {
+    let bars = '';
+    const dayStart = 0; // 0 minutes (Midnight)
+    const dayEnd = 1440; // 24 hours * 60
+    
+    const timeToMins = (t) => {
+        if(!t) return 0;
+        const p = t.split(':');
+        return parseInt(p[0])*60 + parseInt(p[1]);
+    };
+
+    events.forEach(ev => {
+        const startMins = timeToMins(ev.start);
+        const endMins = timeToMins(ev.end);
+        const duration = endMins - startMins;
+        
+        if (duration > 0) {
+            const left = (startMins / dayEnd) * 100;
+            const width = (duration / dayEnd) * 100;
+            bars += `<div class="timeline-bar bar-${ev.type}" style="left:${left}%; width:${width}%;" title="${ev.label}: ${ev.start}-${ev.end}"></div>`;
+        }
+    });
+    return bars;
+}
+
+function downloadPayrollReport() {
+    const user = document.getElementById('analytics-user').value;
+    const start = document.getElementById('an-start-date').value;
+    const end = document.getElementById('an-end-date').value;
+
+    // 1. Validation
+    if (!start || !end) {
+        setStatus('analytics-status', 'error', 'Please select dates for the payroll export.');
+        return;
+    }
+    
+    setStatus('analytics-status', 'processing', 'Generating Payroll CSV... this may take a few seconds.');
+
+    google.script.run
+        .withSuccessHandler(csvData => {
+            if (!csvData || csvData.length === 0) {
+                setStatus('analytics-status', 'error', 'No data found for this period.');
+                return;
+            }
+            
+            let csvContent = "data:text/csv;charset=utf-8,";
+            csvContent += "Date,Name,Email,Status,Login,Logout,Net Worked Hours,Lateness (Mins),Early Leave (Mins),Break Exceed (Mins),Lunch Exceed (Mins),Approved OT (Hours),OT Type,IsAbsent\r\n";
+
+            csvData.forEach(row => {
+                csvContent += `${row.Date},"${row.Name}","${row.Email}",${row.Status},${row.Login},${row.Logout},${row.NetWorkedHours},${row.LatenessMins},${row.EarlyLeaveMins},${row.BreakExceedMins},${row.LunchExceedMins},${row.ApprovedOTHours},${row.OTType},${row.IsAbsent}\r\n`;
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `Payroll_Export_${start}_to_${end}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            setStatus('analytics-status', 'success', 'Download started.');
+        })
+        .withFailureHandler(err => {
+            setStatus('analytics-status', 'error', err.message);
+        })
+        .webGetPayrollExportData(start, end, user || 'ALL');
 }
 
 
