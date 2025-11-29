@@ -1295,6 +1295,41 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
 .profile-subview { animation: fadeIn 0.3s ease; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
       
+    #mobile-blocker {
+        display: none; /* Hidden by default on desktop */
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background-color: var(--page-bg);
+        z-index: 2147483647; /* Max z-index to cover everything */
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 40px;
+      }
+
+      /* Trigger on screens narrower than 768px (Standard Phones/Tablets) */
+      @media (max-width: 768px) {
+        /* Force hide the app interface */
+        header, .app-container, footer, #app-loader, .modal-backdrop, .modal {
+          display: none !important;
+        }
+        
+        /* Show the blocker */
+        #mobile-blocker {
+          display: flex !important;
+        }
+        
+        /* Disable scrolling on body */
+        body {
+          overflow: hidden !important;
+        }
+      }
+      /* [END] NEW: Mobile Restriction Styles */
+
     </style>
   </head>
   
@@ -1310,6 +1345,16 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
   ==================================================================
   -->
   <body>
+    <div id="mobile-blocker">
+      <div class="logo-container" style="margin-bottom: 24px; width: 180px; height: 60px; background: #fff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+          <img class="header-logo" src="https://image2url.com/images/1762976595272-13dc7db5-88f2-48e6-bffb-39d4830812e5.png" alt="Konecta Logo">
+      </div>
+      <h2 style="font-size: 1.5rem; color: var(--text-color); margin-bottom: 12px;">Desktop Access Required</h2>
+      <p style="color: var(--text-color-secondary); font-size: 1rem; max-width: 320px; line-height: 1.5;">
+        KOMPASS is optimized for workstation use. <br>Please access this tool from a laptop or desktop computer.
+      </p>
+    </div>
+    
 
     <!-- App Loader -->
     <div id="app-loader">
@@ -2009,20 +2054,42 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
           <hr class="section-divider">
 
           <form id="reporting-line-form" class="form-container">
-            <h2>Submit New Movement Request</h2>
-            <p class="text-color-secondary" style="margin: -16px 0 16px 0;">Select a user and their new supervisor. This will send a request to the new supervisor for approval.</p>
-            
-            <div class="form-group">
-  <label>Select User to Move</label>
-  <div id="reporting-line-user-container"></div>
-</div>
-<div class="form-group">
-  <label>Assign to New Supervisor</label>
-  <div id="reporting-line-supervisor-container"></div>
-</div>
-            
-            <button type="button" class="btn-primary" onclick="submitMovementRequest()">Submit Movement Request</button>
-          </form>
+  <h2>Submit New Movement Request</h2>
+  <p class="text-color-secondary" style="margin: -16px 0 16px 0;">Select a user to move. You will be prompted to confirm their Project Manager.</p>
+  
+  <div class="form-group">
+    <label>Select User to Move</label>
+    <div id="reporting-line-user-container" onchange="onReportingLineUserChange()"></div>
+  </div>
+
+  <div class="form-group">
+    <label>Assign New Direct Manager</label>
+    <div id="reporting-line-supervisor-container"></div>
+  </div>
+
+  <div id="pm-change-section" style="display:none; padding: 15px; background: var(--input-bg); border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 20px;">
+    <label style="color: var(--konecta-blue); font-weight:600;">Project Manager Selection</label>
+    <p style="margin: 5px 0 10px 0; font-size: 0.9rem;">
+      Current Project Manager: <strong id="current-pm-display">Loading...</strong>
+    </p>
+    
+    <div style="margin-bottom: 10px;">
+      <label style="margin-right: 15px; cursor: pointer;">
+        <input type="radio" name="pm-action" value="keep" checked onclick="togglePMDropdown(false)"> Keep Current
+      </label>
+      <label style="cursor: pointer;">
+        <input type="radio" name="pm-action" value="change" onclick="togglePMDropdown(true)"> Change
+      </label>
+    </div>
+
+    <div id="pm-dropdown-wrapper" style="display:none;">
+      <label>Select New Project Manager</label>
+      <div id="reporting-line-pm-container"></div>
+    </div>
+  </div>
+  
+  <button type="button" class="btn-primary" onclick="submitMovementRequest()">Submit Movement Request</button>
+</form>
           <div id="movement-request-status" class="status-message"></div>
 
           <hr class="section-divider">
@@ -2151,19 +2218,43 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
         
 
         <div id="project-admin-panel" class="tab-panel">
-  <h2>Project Management</h2>
+  <h2>Project Dashboard</h2>
+  
+  <div class="form-group">
+      <label>Select Project</label>
+      <select id="project-admin-select" onchange="loadProjectDashboardData()">
+          <option value="">-- Loading --</option>
+      </select>
+  </div>
+
+  <div id="project-stats-grid" style="display:grid; grid-template-columns: repeat(4, 1fr); gap:15px; margin-bottom:20px;">
+      <div class="metric-card"><span class="metric-title">Total Staff</span><span class="metric-value" id="prj-stat-total">0</span></div>
+      <div class="metric-card"><span class="metric-title">Agents</span><span class="metric-value" id="prj-stat-agents">0</span></div>
+      <div class="metric-card"><span class="metric-title">Supervisors</span><span class="metric-value" id="prj-stat-supers">0</span></div>
+      <div class="metric-card"><span class="metric-title">TLs</span><span class="metric-value" id="prj-stat-tls">0</span></div>
+  </div>
+
+  <hr class="section-divider">
+
+  <h3>Recent Requests (Audit Log)</h3>
+  <div id="project-requests-list" class="request-list">
+      <p class="text-color-secondary">Select a project to view requests.</p>
+  </div>
+  
+  <hr class="section-divider">
+  
   <form id="project-form" class="form-container">
+    <h3>Create/Edit Project</h3>
     <div class="form-group">
       <label>Project Name</label>
-      <input type="text" id="proj-name" placeholder="e.g., Lenovo Support" required>
+      <input type="text" id="proj-name" required>
     </div>
     <div class="form-group">
       <label>Project Manager Email</label>
-      <input type="email" id="proj-manager" placeholder="manager@konecta.com">
+      <input type="email" id="proj-manager">
     </div>
     <button type="button" class="btn-primary" onclick="saveProject()">Save Project</button>
   </form>
-  <div id="project-status" class="status-message"></div>
 </div>
         <!-- ================================== -->
         <!--  TAB 13: ANNOUNCEMENTS ADMIN PANEL -->
@@ -2288,37 +2379,37 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
 <div id="finance-admin-panel" class="tab-panel">
   <h2>Financial Management</h2>
   
-  <div class="form-container">
-    <h3>Add Single Entitlement</h3>
-    <div class="form-row">
-      <div class="form-group"><label>User Email</label><input type="email" id="fin-email" placeholder="user@konecta.com"></div>
-      <div class="form-group"><label>Type</label>
-        <select id="fin-type">
-            <option value="Overtime">Overtime</option>
-            <option value="Bonus">Bonus</option>
-            <option value="Referral">Referral</option>
-            <option value="Deduction">Deduction</option>
-        </select>
+  <div class="button-group">
+      <button class="btn-secondary" onclick="document.getElementById('fin-create-tmpl').style.display='block'">Create Template</button>
+      <button class="btn-secondary" onclick="loadEntitlementTemplates()">Load Templates</button>
+  </div>
+
+  <div id="fin-create-tmpl" class="form-container" style="display:none; margin-bottom:20px;">
+      <h3>New Entitlement Template</h3>
+      <div class="form-row">
+          <div class="form-group"><label>Template Name</label><input type="text" id="tmpl-name"></div>
+          <div class="form-group"><label>Type</label><select id="tmpl-type"><option>Bonus</option><option>Deduction</option><option>Allowance</option></select></div>
       </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label>Amount</label><input type="number" id="fin-amount"></div>
-      <div class="form-group"><label>Due Date</label><input type="date" id="fin-date"></div>
-    </div>
-    <div class="form-group"><label>Description</label><input type="text" id="fin-desc" placeholder="e.g., Project Launch Bonus"></div>
-    <button class="btn-primary" onclick="submitEntitlement()">Add Record</button>
+      <div class="form-row">
+          <div class="form-group"><label>Default Amount</label><input type="number" id="tmpl-amount"></div>
+          <div class="form-group"><label>Currency</label><input type="text" id="tmpl-curr" value="EGP"></div>
+      </div>
+      <button class="btn-primary" onclick="saveEntitlementTemplate()">Save Template</button>
   </div>
 
   <hr class="section-divider">
 
+  <h3>Apply Template to Employees</h3>
   <div class="form-container">
-    <h3>Bulk Upload (CSV)</h3>
-    <p class="text-color-secondary">Headers: Email, Type, Amount, Date, Description</p>
-    <input type="file" id="fin-csv-upload" accept=".csv">
-    <button class="btn-secondary" onclick="uploadFinanceCSV()">Upload CSV</button>
+      <div class="form-group">
+          <label>Select Template</label>
+          <select id="fin-apply-tmpl-select"><option>-- Load Templates First --</option></select>
+      </div>
+      <div class="form-group">
+          <label>Select Users</label>
+          <div id="fin-apply-users-container"></div> </div>
+      <button class="btn-primary" onclick="applyTemplateToUsers()">Apply to Selected</button>
   </div>
-  
-  <div id="finance-status" class="status-message"></div>
 </div>
 
         <!-- ================================== -->
@@ -2424,71 +2515,57 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
 
 
 <div id="overtime-panel" class="tab-panel">
-  <h2>Overtime Management</h2>
+  <h2>Overtime & Day Off Management</h2>
   
-  <div id="ot-manager-section" style="display:none; margin-bottom: 20px; padding: 20px; background: var(--input-bg); border-radius: 8px;">
-    <h3 style="margin-top:0; color: var(--konecta-blue);">Pre-Approve Overtime</h3>
-    <div class="form-row">
-      <div class="form-group">
-        <label>Select Employee</label>
-        <div id="ot-employee-select-container"></div>
-      </div>
-      <div class="form-group">
-        <label>Date</label>
-        <input type="date" id="ot-pre-date">
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>Hours Allowed</label>
-        <input type="number" id="ot-pre-hours" step="0.5" placeholder="e.g. 2">
-      </div>
-      <div class="form-group">
-        <label>Comment</label>
-        <input type="text" id="ot-pre-comment" placeholder="Project requirement...">
-      </div>
-    </div>
-    <button class="btn-primary" onclick="submitPreApproval()">Pre-Approve</button>
-  </div>
-
   <div class="form-container">
-    <h3>Request Overtime</h3>
+    <div style="display:flex; justify-content:space-between;">
+        <h3>Request / Assign Hours</h3>
+        <div id="ot-assign-toggle" style="display:none;">
+            <label><input type="checkbox" id="ot-is-assignment" onchange="toggleOtAssignment()"> Assign to Agent</label>
+        </div>
+    </div>
+
+    <div id="ot-employee-select-wrapper" style="display:none; margin-bottom:15px; padding:10px; background:#f3f4f6; border-radius:6px;">
+        
+        <div id="ot-employee-select-container"></div>
+    </div>
+
     <div class="form-row">
+      <div class="form-group"><label>Date</label><input type="date" id="ot-req-date"></div>
       <div class="form-group">
-        <label>Date</label>
-        <input type="date" id="ot-req-date">
-      </div>
-      <div class="form-group">
-        <label>Requested Hours</label>
-        <input type="number" id="ot-req-hours" step="0.5">
+        <label>Type</label>
+        <select id="ot-req-type">
+          <option value="Post-Shift">Post-Shift (Stay Late)</option>
+          <option value="Pre-Shift">Pre-Shift (Come Early)</option>
+          <option value="Work Day Off">Work Day Off (Cancel Off)</option>
+        </select>
       </div>
     </div>
-    <div class="form-group">
-      <label>Reason</label>
-      <input type="text" id="ot-req-reason" placeholder="Why is overtime needed?">
+    
+    <div class="form-row">
+      <div class="form-group"><label>Start</label><input type="time" id="ot-req-start"></div>
+      <div class="form-group"><label>End</label><input type="time" id="ot-req-end"></div>
     </div>
-    <button class="btn-primary" onclick="submitOtRequest()">Submit Request</button>
+
+    <div class="form-group"><label>Reason</label><input type="text" id="ot-req-reason" placeholder="Reason..."></div>
+    <button class="btn-primary" onclick="submitOtRequest()">Submit</button>
     <div id="ot-status" class="status-message"></div>
   </div>
 
   <hr class="section-divider">
 
-  <div style="display: flex; justify-content: space-between; align-items: center;">
-    <h3>Overtime Requests</h3>
-    <div class="form-group" style="margin: 0; width: 150px;">
-        <select id="ot-filter-status" onchange="loadOvertimeRequests()">
-            <option value="Pending">Pending</option>
-            <option value="Approved">Approved</option>
-            <option value="Denied">Denied</option>
-            <option value="All">All</option>
+  <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 15px;">
+    <h3 style="margin: 0;">Request History</h3>
+    <div class="form-group" style="margin: 0; min-width: 180px;">
+        <label for="ot-filter-status" style="font-size: 0.8rem; margin-bottom: 4px;">Filter Status</label>
+        <select id="ot-filter-status" onchange="loadOvertimeRequests()" style="padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); width: 100%;">
+            <option value="Pending">⚡ Pending Actions</option>
+            <option value="Approved">✅ Approved</option>
+            <option value="Denied">❌ Denied</option>
+            <option value="All">📂 All History</option>
         </select>
     </div>
   </div>
-  
-  <div id="ot-request-list" class="request-list">
-    <p class="text-color-secondary">Loading...</p>
-  </div>
-</div>
         
       </main> <!-- End #app-content -->
       
@@ -2930,7 +3007,9 @@ function populateAdminDropdown(users, selfName, dropdownId, selfText, defaultVal
     'offboard-user-select': 'offboard-user-select-container',
     'hr-balance-user-select': 'hr-balance-user-select-container',
     'hr-offboard-user-select': 'hr-offboard-user-select-container',
-    'ot-employee-select': 'ot-employee-select-container'
+    'ot-employee-select': 'ot-employee-select-container',
+    // Inside populateAdminDropdown map:
+    'reporting-line-pm': 'reporting-line-pm-container'
   };
 
   // Special Handling for History (Multi-Select)
@@ -2959,6 +3038,10 @@ function populateAdminDropdown(users, selfName, dropdownId, selfText, defaultVal
           document.getElementById(containerId).appendChild(hidden);
       }
       hidden.value = val;
+      // NEW: Trigger change event manually for logic hooks
+      if (dropdownId === 'reporting-line-user') {
+          onReportingLineUserChange();
+      }
   }, defaultVal);
 }
       
@@ -3161,39 +3244,55 @@ function updateCurrentStatus(statusInfo) {
   const statusNameDisplay = document.getElementById('status-current-name');
   const statusIconBg = document.getElementById('status-icon-bg');
 
-  // Enable buttons (in case they were disabled)
+  // Enable buttons
   setAllPunchButtonsDisabled(false); 
 
-  // Handle "Logged Out" or Empty State
-  if (!statusInfo || !statusInfo.status || statusInfo.status === 'Logged Out') {
-    statusDiv.style.visibility = 'hidden';
-    statusDiv.className = 'status-message';
-    timersGrid.style.display = 'none'; // Hide Timers
-    document.title = "KOMPASS";
-    return;
+  // --- MODIFICATION: ALWAYS SHOW GRID ---
+  timersGrid.style.display = 'grid'; 
+
+  // Handle Empty/Initial State safely
+  if (!statusInfo) {
+      shiftTimerValue.innerText = "00:00:00";
+      statusTimerValue.innerText = "00:00:00";
+      statusNameDisplay.innerText = "Loading...";
+      return;
   }
 
   // --- 1. SETUP TIMESTAMPS ---
-  const lastActionTime = new Date(statusInfo.time);
+  // Safely parse dates (handle nulls from server)
+  const lastActionTime = statusInfo.time ? new Date(statusInfo.time) : null;
   const loginTime = statusInfo.loginTime ? new Date(statusInfo.loginTime) : null;
   
-  // Show Timers Grid if logged in OR if there is an active status
-  if (loginTime || (currentStatusName && currentStatusName !== "Logged Out")) {
-    timersGrid.style.display = 'grid';
-    if (loginTime) {
-       shiftStartDisplay.innerText = loginTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-    } else {
-       shiftStartDisplay.innerText = "--:--"; // Handle missing login time gracefully
-    }
-  } else {
-    timersGrid.style.display = 'none';
+  let currentStatusName = statusInfo.status || "Logged Out";
+  statusNameDisplay.innerText = currentStatusName;
+
+  // Handle "Logged Out" visuals specifically
+  if (currentStatusName === 'Logged Out') {
+    statusDiv.style.visibility = 'hidden';
+    statusDiv.className = 'status-message';
+    document.title = "KOMPASS";
+    
+    // Reset Values for visual clarity
+    shiftTimerValue.innerText = "00:00:00";
+    shiftStartDisplay.innerText = "--:--";
+    statusTimerValue.innerText = "00:00:00";
+    
+    statusLabel.innerText = "Status";
+    statusIconBg.style.background = "#9ca3af"; // Grey
+    statusIconBg.innerHTML = "⚫";
+    
+    // We do NOT return here, so the interval clears and sets 00:00:00 ensures stability
+    return;
   }
 
-  // --- 2. UPDATE STATIC LABELS ---
-  let currentStatusName = statusInfo.status;
-  statusNameDisplay.innerText = currentStatusName;
-  
-  // Dynamic Labeling based on status
+  // Update Login Time Display
+  if (loginTime) {
+    shiftStartDisplay.innerText = loginTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  } else {
+    shiftStartDisplay.innerText = "--:--";
+  }
+
+  // --- 2. UPDATE STATIC LABELS (For Active States) ---
   if (currentStatusName.includes("Break") || currentStatusName.includes("Lunch")) {
       statusLabel.innerText = "Break Duration";
       statusIconBg.style.background = "#f59e0b"; // Orange/Yellow
@@ -3203,11 +3302,9 @@ function updateCurrentStatus(statusInfo) {
       statusIconBg.style.background = "#10b981"; // Green
       statusIconBg.innerHTML = "💼";
   } else {
-      // AUX Codes (Meeting, Coaching, System Down)
       statusLabel.innerText = "AUX Duration";
       statusIconBg.style.background = "#3b82f6"; // Blue
       statusIconBg.innerHTML = "⚡";
-      
       if (currentStatusName.includes("System Down")) {
          statusIconBg.style.background = "#dc2626"; // Red
          statusIconBg.innerHTML = "🚨";
@@ -3222,55 +3319,52 @@ function updateCurrentStatus(statusInfo) {
     if (loginTime) {
       const shiftDiff = Math.floor((now - loginTime) / 1000);
       shiftTimerValue.innerText = formatHHMMSS(shiftDiff);
+    } else {
+      shiftTimerValue.innerText = "00:00:00";
     }
 
     // B. STATUS/AUX TIMER CALCULATION
-    const statusDiff = Math.floor((now - lastActionTime) / 1000);
-    statusTimerValue.innerText = formatHHMMSS(statusDiff);
-    
-    // C. THRESHOLD ALERTS (Break Exceed)
-    let warningMsg = "";
-    
-    // Configurable thresholds (using globals)
-    let maxSeconds = 0;
-    if (currentStatusName.includes("First Break") || currentStatusName.includes("Last Break")) {
-        maxSeconds = PLANNED_BREAK_SECONDS; 
-    } else if (currentStatusName.includes("Lunch")) {
-        maxSeconds = PLANNED_LUNCH_SECONDS; 
-    }
-
-    // Check Thresholds
-    if (maxSeconds > 0) {
-        if (statusDiff > maxSeconds) {
-            // EXCEEDED
-            const exceedSec = statusDiff - maxSeconds;
-            warningMsg = `<strong>⚠️ Exceeded by ${formatCompactTime(exceedSec)}</strong>`;
-            statusTimerValue.style.color = "#dc2626"; // Red Text
-            statusDiv.className = `status-message visible status-denied`;
-            document.title = `⚠️ ${formatCompactTime(exceedSec)} Over - ${currentStatusName}`;
-        } else if (statusDiff > (maxSeconds * 0.85)) {
-            // WARNING
-            const remainSec = maxSeconds - statusDiff;
-            warningMsg = `<span style="color: #d97706;">${formatCompactTime(remainSec)} remaining</span>`;
-            statusTimerValue.style.color = "#d97706"; // Orange Text
-            statusDiv.className = `status-message visible status-pending`;
-        } else {
-            // NORMAL
-            const remainSec = maxSeconds - statusDiff;
-            warningMsg = `<span style="color: #10b981;">${formatCompactTime(remainSec)} remaining</span>`;
-            statusTimerValue.style.color = "var(--text-color)";
-            statusDiv.className = `status-message visible status-approved`; // Green bar
+    if (lastActionTime) {
+        const statusDiff = Math.floor((now - lastActionTime) / 1000);
+        statusTimerValue.innerText = formatHHMMSS(statusDiff);
+        
+        // C. THRESHOLD ALERTS (Break Exceed)
+        let warningMsg = "";
+        let maxSeconds = 0;
+        
+        if (currentStatusName.includes("First Break") || currentStatusName.includes("Last Break")) {
+            maxSeconds = PLANNED_BREAK_SECONDS; 
+        } else if (currentStatusName.includes("Lunch")) {
+            maxSeconds = PLANNED_LUNCH_SECONDS; 
         }
-        
-        // Show the alert bar below timers if there's a limit involved
-        statusDiv.innerHTML = warningMsg;
-        statusDiv.style.visibility = 'visible';
-        
+
+        if (maxSeconds > 0) {
+            if (statusDiff > maxSeconds) {
+                const exceedSec = statusDiff - maxSeconds;
+                warningMsg = `<strong>⚠️ Exceeded by ${formatCompactTime(exceedSec)}</strong>`;
+                statusTimerValue.style.color = "#dc2626"; 
+                statusDiv.className = `status-message visible status-denied`;
+                document.title = `⚠️ ${formatCompactTime(exceedSec)} Over - ${currentStatusName}`;
+            } else if (statusDiff > (maxSeconds * 0.85)) {
+                const remainSec = maxSeconds - statusDiff;
+                warningMsg = `<span style="color: #d97706;">${formatCompactTime(remainSec)} remaining</span>`;
+                statusTimerValue.style.color = "#d97706"; 
+                statusDiv.className = `status-message visible status-pending`;
+            } else {
+                const remainSec = maxSeconds - statusDiff;
+                warningMsg = `<span style="color: #10b981;">${formatCompactTime(remainSec)} remaining</span>`;
+                statusTimerValue.style.color = "var(--text-color)";
+                statusDiv.className = `status-message visible status-approved`; 
+            }
+            statusDiv.innerHTML = warningMsg;
+            statusDiv.style.visibility = 'visible';
+        } else {
+            statusTimerValue.style.color = "var(--text-color)";
+            statusDiv.style.visibility = 'hidden';
+            document.title = `KOMPASS - ${currentStatusName}`;
+        }
     } else {
-        // Normal Working Status (Hide the alert bar, just show timers)
-        statusTimerValue.style.color = "var(--text-color)";
-        statusDiv.style.visibility = 'hidden';
-        document.title = `KOMPASS - ${currentStatusName}`;
+        statusTimerValue.innerText = "00:00:00";
     }
   };
 
@@ -4817,38 +4911,60 @@ function populateHistoryReport(data) {
           .webGetMyTeam();
       }
 
-     // --- Submit Movement Request (MODIFIED) ---
-      function submitMovementRequest() {
-        try {
-          const userEmail = document.getElementById('reporting-line-user').value;
-          const newSupervisorEmail = document.getElementById('reporting-line-supervisor').value;
+ // [index.html] UPDATED: Handle "Keep" vs "Change" robustly
+function submitMovementRequest() {
+  try {
+    const userEmail = document.getElementById('reporting-line-user').value;
+    const newSupervisorEmail = document.getElementById('reporting-line-supervisor').value;
+    
+    if (!userEmail) throw new Error("Please select a user to move.");
+    if (!newSupervisorEmail) throw new Error("Please select a new Direct Manager.");
+    if (userEmail === newSupervisorEmail) throw new Error("A user cannot be their own supervisor.");
 
-          if (!userEmail) throw new Error("Please select a user to move.");
-          if (!newSupervisorEmail) throw new Error("Please select a new supervisor.");
-          if (userEmail === newSupervisorEmail) throw new Error("A user cannot be their own supervisor.");
+    // Logic for Project Manager
+    let finalPMEmail = "";
+    
+    // Check if the radio buttons exist (safety check)
+    const pmRadio = document.querySelector('input[name="pm-action"]:checked');
+    const pmAction = pmRadio ? pmRadio.value : 'keep'; // Default to keep if hidden
+    
+    if (pmAction === 'keep') {
+       const displayEl = document.getElementById('current-pm-display');
+       finalPMEmail = displayEl.dataset.email;
+       
+       // FIX: If "Keep" is selected but the user HAS NO PM, force selection
+       if (!finalPMEmail || finalPMEmail === "undefined" || finalPMEmail === "null" || finalPMEmail === "") {
+           alert("This user currently has no Project Manager assigned. Please select 'Change' and assign one.");
+           return; 
+       }
+    } else {
+       finalPMEmail = document.getElementById('reporting-line-pm').value;
+       if (!finalPMEmail) throw new Error("Please select the new Project Manager from the dropdown.");
+    }
 
-          setStatus('movement-request-status', 'processing', 'Submitting movement request...');
+    setStatus('movement-request-status', 'processing', 'Submitting movement request...');
 
-          google.script.run
-            .withSuccessHandler(msg => {
-              if (msg.startsWith('Error:')) {
-                setStatus('movement-request-status', 'error', msg.replace('Error: ', ''));
-              } else {
-                setStatus('movement-request-status', 'success', msg);
-                document.getElementById('reporting-line-form').reset();
-                // Also refresh pending list, as the new request might appear
-                loadPendingMovements();
-              }
-            })
-            .withFailureHandler(err => {
-              setStatus('movement-request-status', 'error', err.message);
-            })
-            .webSubmitMovementRequest(userEmail, newSupervisorEmail); // <-- MODIFIED Function Name
+    google.script.run
+      .withSuccessHandler(msg => {
+        // If it was auto-approved (Superadmin) or pending (Admin), show the message
+        setStatus('movement-request-status', 'success', msg);
+        
+        // Reset form
+        document.getElementById('reporting-line-form').reset();
+        document.getElementById('pm-change-section').style.display = 'none';
+        
+        // Refresh the pending list (in case it was pending, it appears; in case approved, it won't)
+        loadPendingMovements();
+      })
+      .withFailureHandler(err => {
+        setStatus('movement-request-status', 'error', err.message);
+      })
+      .webSubmitMovementRequest(userEmail, newSupervisorEmail, finalPMEmail);
 
-        } catch (err) {
-          setStatus('movement-request-status', 'error', err.message);
-        }
-      }
+  } catch (err) {
+    setStatus('movement-request-status', 'error', err.message);
+  }
+}
 
       // --- NEW: Load Pending Movements ---
       function loadPendingMovements() {
@@ -5102,7 +5218,7 @@ function loadMyCoaching() {
     .webGetCoachingHistory(null);
 
   // 2. Load Dropdown (Hierarchy Aware) & SHOW FORM
-  if (selfRole === 'admin' || selfRole === 'superadmin' || selfRole === 'manager') {
+  if (selfRole === 'admin' || selfRole === 'superadmin' || selfRole === 'manager' || selfRole === 'project_manager') {
       const dropdownContainer = document.getElementById('coaching-agent-select-container');
       if (dropdownContainer) {
           dropdownContainer.innerHTML = '<span style="font-size:0.8rem; color:#666;">Loading team...</span>';
@@ -6371,6 +6487,26 @@ function loadMyProfile() {
 }
 
 function saveProfile() {
+  const sensitiveFields = ['iban', 'nationalId']; // Add fields that require approval
+  
+  // 1. Handle Standard Updates (Phone, Address, etc. - if you allow direct update)
+  // For Phase 2 compliance, let's say ALL changes might need approval, 
+  // or at least IBAN. Let's assume Address/Phone are still direct for now 
+  // but IBAN triggers the new flow.
+  
+  const iban = document.getElementById('prof-iban').value;
+  const originalIban = document.getElementById('prof-iban').getAttribute('data-original'); // You need to store original on load
+
+  if (iban && iban !== originalIban) {
+     if(confirm("Changing IBAN requires HR approval. Submit request?")) {
+        google.script.run
+          .withSuccessHandler(alert)
+          .webSubmitDataChangeRequest('IBAN', iban, "User Request via Profile");
+     }
+  }
+  
+  
+  
   const formData = {
     phone: document.getElementById('prof-phone').value,
     address: document.getElementById('prof-address').value,
@@ -6798,7 +6934,7 @@ function filterCandidates() {
 
 function loadPerformanceTab() {
   // 1. Show Manager Section if Admin
-  if (selfRole === 'admin' || selfRole === 'superadmin') {
+  if (selfRole === 'admin' || selfRole === 'superadmin' || selfRole === 'manager' || selfRole === 'project_manager') {
     document.getElementById('manager-review-section').style.display = 'block';
     // Reuse your existing populate dropdown logic
     populateAdminDropdown(allUsersList, selfUserName, 'perf-employee-select', 'Select Employee');
@@ -7431,43 +7567,48 @@ function submitHrOffboarding() {
 // --- OVERTIME FUNCTIONS ---
 
 function loadOvertimeTab() {
-  // 1. Setup User Info
   document.getElementById('ot-req-date').valueAsDate = new Date();
   
-  // 2. Show Manager Section if Permitted
-  if (selfRole === 'admin' || selfRole === 'superadmin' || selfRole === 'manager') {
-    document.getElementById('ot-manager-section').style.display = 'block';
-    document.getElementById('ot-pre-date').valueAsDate = new Date();
-    populateAdminDropdown(allUsersList, selfUserName, 'ot-employee-select', 'Select Employee');
-  } else {
-    document.getElementById('ot-manager-section').style.display = 'none';
+  // Show assignment toggle for managers
+  if (['admin','superadmin','manager','project_manager'].includes(selfRole)) {
+      document.getElementById('ot-assign-toggle').style.display = 'block';
+      populateAdminDropdown(allUsersList, selfUserName, 'ot-employee-select', 'Select Agent');
   }
-
-  // 3. Load List
   loadOvertimeRequests();
 }
 
+function toggleOtAssignment() {
+    const isAssign = document.getElementById('ot-is-assignment').checked;
+    document.getElementById('ot-employee-select-wrapper').style.display = isAssign ? 'block' : 'none';
+}
+
+
 function submitOtRequest() {
-  const data = {
-    date: document.getElementById('ot-req-date').value,
-    hours: document.getElementById('ot-req-hours').value,
-    reason: document.getElementById('ot-req-reason').value
-  };
-  
-  if (!data.date || !data.hours || !data.reason) {
-    setStatus('ot-status', 'error', 'All fields are required.');
-    return;
+  const isAssignment = document.getElementById('ot-is-assignment').checked;
+  const targetEmail = isAssignment ? document.getElementById('ot-employee-select').value : null;
+
+  if (isAssignment && !targetEmail) {
+      setStatus('ot-status', 'error', 'Please select an agent.');
+      return;
   }
 
+  const data = {
+    targetEmail: targetEmail, // Null if self-request
+    date: document.getElementById('ot-req-date').value,
+    type: document.getElementById('ot-req-type').value,
+    startTime: document.getElementById('ot-req-start').value,
+    endTime: document.getElementById('ot-req-end').value,
+    reason: document.getElementById('ot-req-reason').value
+  };
+
   setStatus('ot-status', 'processing', 'Submitting...');
-  google.script.run
-    .withSuccessHandler(msg => {
+  google.script.run.withSuccessHandler(msg => {
       setStatus('ot-status', 'success', msg);
       loadOvertimeRequests();
-    })
-    .withFailureHandler(err => setStatus('ot-status', 'error', err.message))
-    .webSubmitOvertimeRequest(data);
+  }).withFailureHandler(err => setStatus('ot-status', 'error', err.message))
+  .webSubmitOvertimeRequest(data);
 }
+
 
 function submitPreApproval() {
   const data = {
@@ -7496,132 +7637,98 @@ function loadOvertimeRequests() {
   const list = document.getElementById('ot-request-list');
   list.innerHTML = '<p class="text-color-secondary">Loading...</p>';
 
-  google.script.run
-    .withSuccessHandler(reqs => {
-      if (reqs.length === 0) {
-        list.innerHTML = '<p class="text-color-secondary">No requests found.</p>';
-        return;
-      }
+  google.script.run.withSuccessHandler(reqs => {
+      if(reqs.length === 0) { list.innerHTML = '<p class="text-color-secondary">No records found.</p>'; return; }
       
       let html = '';
       reqs.forEach(r => {
-        let statusBadge = `status-pending`;
-        if (r.status === 'Approved') statusBadge = 'status-approved';
-        if (r.status === 'Denied') statusBadge = 'status-denied';
+          let actions = '';
+          // Show buttons if Pending AND User has permission
+          if (r.status.includes('Pending') && ['admin','superadmin','manager','project_manager'].includes(selfRole)) {
+              actions = `
+                <div style="margin-top:8px;">
+                   <button class="approve-btn" onclick="actionOvertime('${r.id}','Approved')">Approve</button>
+                   <button class="deny-btn" onclick="actionOvertime('${r.id}','Denied')">Deny</button>
+                </div>`;
+          }
 
-        // Manager Actions
-        let actions = '';
-        if (r.status === 'Pending' && (selfRole === 'admin' || selfRole === 'manager' || selfRole === 'superadmin')) {
-          actions = `
-            <div style="margin-top: 10px;">
-              <button class="approve-btn" onclick="actionOvertime('${r.id}', 'Approved')">Approve</button>
-              <button class="deny-btn" onclick="actionOvertime('${r.id}', 'Denied')">Deny</button>
-            </div>
-          `;
-        }
-
-        html += `
-          <div class="request-list-item">
-            <div class="item-details">
-              <h4>${r.name} <span class="text-color-secondary">(${r.hours} hrs)</span></h4>
-              <p><strong>Date:</strong> ${r.date}</p>
-              <p><strong>Planned Shift End:</strong> ${r.plannedEnd}</p>
-              <p><strong>Reason:</strong> ${r.reason}</p>
-              ${r.comment ? `<p class="text-color-secondary"><em>Note: ${r.comment}</em></p>` : ''}
-            </div>
-            <div class="item-actions">
-              <span class="status-badge ${statusBadge}">${r.status}</span>
-              ${actions}
-            </div>
-          </div>
-        `;
+          html += `
+            <div class="request-list-item">
+                <div class="item-details">
+                    <h4>${r.name} <span class="status-tag status-info">${r.type}</span></h4>
+                    <p><strong>Date:</strong> ${r.date}</p>
+                    <p class="text-color-secondary" style="font-size:0.85rem;">Time: ${r.time} (${r.hours}h)</p>
+                    <p class="text-color-secondary" style="font-size:0.85rem;">By: ${r.initiatedBy}</p>
+                    <div style="display:flex; gap:10px; margin-top:5px; font-size:0.8rem;">
+                        <span style="color:${r.directStatus==='Approved'?'green':'orange'}">Direct: ${r.directStatus}</span>
+                        <span style="color:${r.projectStatus==='Approved'?'green':'orange'}">Project: ${r.projectStatus}</span>
+                    </div>
+                </div>
+                <div class="item-actions">
+                    <span class="status-badge ${r.status==='Approved'?'status-approved':r.status==='Denied'?'status-denied':'status-pending'}">${r.status}</span>
+                    ${actions}
+                </div>
+            </div>`;
       });
       list.innerHTML = html;
-    })
-    .withFailureHandler(err => list.innerHTML = `<p class="error">${err.message}</p>`)
-    .webGetOvertimeRequests(filter);
+  }).webGetOvertimeRequests(filter);
 }
 
 function actionOvertime(id, action) {
-  const comment = prompt(`Reason for ${action}:`) || "";
+  const comment = prompt(`Optional comment for ${action}:`) || "";
+  
+  // Visual feedback
+  const list = document.getElementById('ot-request-list');
+  list.style.opacity = '0.5';
+
   google.script.run
     .withSuccessHandler(msg => {
       alert(msg);
+      list.style.opacity = '1';
       loadOvertimeRequests();
     })
-    .withFailureHandler(err => alert(err.message))
-    .webActionOvertime(id, action, comment, null);
+    .withFailureHandler(err => {
+        list.style.opacity = '1';
+        alert("Error: " + err.message);
+    })
+    .webActionOvertime(id, action, comment);
 }
 
 // --- PHASE 6: BREAK CONFIG EDITOR JS ---
 
 function loadBreakConfig() {
   const container = document.getElementById('break-config-container');
-  container.innerHTML = '<p class="text-color-secondary">Loading configuration...</p>';
+  container.innerHTML = '<p class="text-color-secondary">Loading rules...</p>';
   
-  // 1. Fetch Projects First
   google.script.run
-    .withSuccessHandler(projects => {
-      
-      // 2. Then Fetch Break Configs
-      google.script.run
-        .withSuccessHandler(configs => {
-          if (!configs || configs.length === 0) {
-            container.innerHTML = '<p class="status-message warning visible">No break rules found. Please run setup script.</p>';
-            return;
-          }
-
-          let html = '';
-          configs.forEach((conf) => {
-            // Build Project Options
-            let projectOptions = `<option value="ALL">ALL (Global)</option>`;
-            projects.forEach(p => {
-              const selected = (p.id === conf.project) ? 'selected' : '';
-              projectOptions += `<option value="${p.id}" ${selected}>${p.name}</option>`;
-            });
-
-            html += `
-              <div class="form-row break-rule-row" style="border-bottom:1px solid var(--border-color); padding-bottom:10px; margin-bottom:10px; align-items:flex-end;">
-                
-                <div class="form-group" style="flex:1;">
-                  <label>Break Type</label>
-                  <input type="text" class="rule-type" value="${conf.type}" readonly style="background-color: var(--input-bg); font-weight:bold; border:none; padding-left:0;">
-                </div>
-
-                <div class="form-group" style="flex:2;">
-                  <label>Project Scope</label>
-                  <select class="rule-project" data-original-project="${conf.project}">
-                    ${projectOptions}
-                  </select>
-                </div>
-
-                <div class="form-group" style="flex:1;">
-                  <label>Default (Sec)</label>
-                  <input type="number" class="rule-default" value="${conf.defaultDur}">
-                  <small class="text-color-secondary" style="margin-top:2px;">${(conf.defaultDur/60).toFixed(1)} min</small>
-                </div>
-
-                <div class="form-group" style="flex:1;">
-                  <label>Max (Sec)</label>
-                  <input type="number" class="rule-max" value="${conf.maxDur}">
-                  <small class="text-color-secondary" style="margin-top:2px;">${(conf.maxDur/60).toFixed(1)} min</small>
-                </div>
-
-              </div>
-            `;
-          });
-          container.innerHTML = html;
-        })
-        .withFailureHandler(err => {
-          container.innerHTML = `<p class="status-message error visible">Config Error: ${err.message}</p>`;
-        })
-        .webGetBreakConfig();
-
+    .withSuccessHandler(configs => {
+      let html = '';
+      configs.forEach((conf, index) => {
+        html += `
+          <div class="form-row break-rule-row" style="border-bottom:1px solid var(--border-color); padding-bottom:10px; margin-bottom:10px;">
+            <div class="form-group" style="flex:2;">
+              <label>Break Type</label>
+              <input type="text" class="rule-type" value="${conf.type}" readonly style="background-color: var(--input-bg); font-weight:bold;">
+            </div>
+            <div class="form-group">
+              <label>Default (Sec)</label>
+              <input type="number" class="rule-default" value="${conf.defaultDur}">
+              <small class="text-color-secondary">${Math.floor(conf.defaultDur/60)} mins</small>
+            </div>
+            <div class="form-group">
+              <label>Max Allowed (Sec)</label>
+              <input type="number" class="rule-max" value="${conf.maxDur}">
+              <small class="text-color-secondary">${Math.floor(conf.maxDur/60)} mins</small>
+            </div>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
     })
     .withFailureHandler(err => {
-      container.innerHTML = `<p class="status-message error visible">Project Load Error: ${err.message}</p>`;
+      container.innerHTML = `<p class="status-message error visible">${err.message}</p>`;
     })
-    .webGetProjects();
+    .webGetBreakConfig();
 }
 
 function saveBreakConfig() {
@@ -7629,11 +7736,8 @@ function saveBreakConfig() {
   const newConfigs = [];
   
   rows.forEach(row => {
-    const projectSelect = row.querySelector('.rule-project');
     newConfigs.push({
       type: row.querySelector('.rule-type').value,
-      project: projectSelect.value, // New selected project
-      originalProject: projectSelect.getAttribute('data-original-project'), // Old project (for lookup)
       defaultDur: row.querySelector('.rule-default').value,
       maxDur: row.querySelector('.rule-max').value
     });
@@ -7644,8 +7748,8 @@ function saveBreakConfig() {
   google.script.run
     .withSuccessHandler(msg => {
       setStatus('break-config-status', 'success', msg);
-      // Reload to refresh the "original-project" data attributes
-      loadBreakConfig();
+      // Refresh user info silently to apply new rules to the current session immediately
+      google.script.run.withSuccessHandler(user => populateUserInfo(user)).getUserInfo();
     })
     .withFailureHandler(err => {
       setStatus('break-config-status', 'error', err.message);
@@ -7653,18 +7757,126 @@ function saveBreakConfig() {
     .webSaveBreakConfig(newConfigs);
 }
 
+// 1. Triggered when a user is selected in the "Reporting Line" tab
+function onReportingLineUserChange() {
+  setTimeout(() => {
+    const userEmail = document.getElementById('reporting-line-user').value;
+    if (!userEmail) {
+      document.getElementById('pm-change-section').style.display = 'none';
+      return;
+    }
+
+    // Find user in global list
+    const user = allUsersList.find(u => u.email === userEmail);
+    if (user) {
+      // Show section
+      document.getElementById('pm-change-section').style.display = 'block';
+      
+      // Display Current PM
+      const currentPM = user.projectManager || "None";
+      const pmName = allUsersList.find(u => u.email === currentPM)?.name || currentPM;
+      
+      document.getElementById('current-pm-display').innerText = pmName;
+      document.getElementById('current-pm-display').dataset.email = currentPM; 
+
+      // Reset Radio to Keep
+      document.querySelector('input[name="pm-action"][value="keep"]').checked = true;
+      togglePMDropdown(false);
+      
+      // --- FIX: Use 'allAdminsList' to show only Managers/Admins in the dropdown ---
+      populateAdminDropdown(allAdminsList, selfUserName, 'reporting-line-pm', 'Select New Project Manager');
+    }
+  }, 200); 
+}
+// 2. Toggles the dropdown visibility
+function togglePMDropdown(show) {
+  document.getElementById('pm-dropdown-wrapper').style.display = show ? 'block' : 'none';
+}
+
+// --- FINANCE ADMIN JS ---
+function saveEntitlementTemplate() {
+    const data = {
+        name: document.getElementById('tmpl-name').value,
+        type: document.getElementById('tmpl-type').value,
+        amount: document.getElementById('tmpl-amount').value,
+        currency: document.getElementById('tmpl-curr').value,
+        description: `Template: ${document.getElementById('tmpl-name').value}`
+    };
+    google.script.run.withSuccessHandler(alert).webSaveEntitlementTemplate(data);
+}
+
+function loadEntitlementTemplates() {
+    google.script.run.withSuccessHandler(tmpls => {
+        const sel = document.getElementById('fin-apply-tmpl-select');
+        sel.innerHTML = "";
+        tmpls.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t.id;
+            opt.text = `${t.name} (${t.amount} ${t.currency})`;
+            sel.appendChild(opt);
+        });
+    }).webGetEntitlementTemplates();
+}
+
+function applyTemplateToUsers() {
+    const tmplId = document.getElementById('fin-apply-tmpl-select').value;
+    // Use the custom multi-select logic we built earlier
+    // Assuming 'fin-apply-users-container' uses renderGlobalUserSelector logic
+    // We need to initialize it first.
+    
+    // For now, let's assume we read from the dataset if initialized
+    // NOTE: You must initialize this dropdown in showTab('finance-admin')
+    const wrapper = document.getElementById('fin-apply-users-container');
+    let emails = [];
+    try { emails = JSON.parse(wrapper.dataset.value || "[]"); } catch(e){}
+    
+    if(emails.length === 0) { alert("Select users first."); return; }
+    
+    google.script.run.withSuccessHandler(alert).webApplyEntitlementTemplate(tmplId, emails);
+}
+
+// --- PROJECT ADMIN JS ---
+function loadProjectDashboardData() {
+    const pid = document.getElementById('project-admin-select').value;
+    if(!pid) return;
+    
+    // Load Stats
+    google.script.run.withSuccessHandler(data => {
+        document.getElementById('prj-stat-total').innerText = data.stats.total;
+        document.getElementById('prj-stat-agents').innerText = data.stats.agents;
+        document.getElementById('prj-stat-supers').innerText = data.stats.supers;
+    }).webGetProjectDashboard(pid);
+    
+    // Load Requests
+    google.script.run.withSuccessHandler(reqs => {
+        const list = document.getElementById('project-requests-list');
+        let html = '';
+        reqs.forEach(r => {
+            html += `<div class="request-list-item">
+                <div class="item-details">
+                    <h4>${r.type}: ${r.user}</h4>
+                    <small>${r.date}</small>
+                </div>
+                <span class="status-badge ${r.status === 'Approved' ? 'status-approved' : 'status-pending'}">${r.status}</span>
+            </div>`;
+        });
+        list.innerHTML = html;
+    }).webGetProjectRequests(pid);
+}
+
+
       // Initialize
       document.addEventListener("DOMContentLoaded", function() {
         loadUserInfo(); 
         
         // --- PHASE 6: AUTO-REFRESH ---
-        // Refresh data every 60 seconds to keep the dashboard and status live
+        // Refresh data every 600 seconds to keep the dashboard and status live
         setInterval(() => {
             if (!document.hidden) { // Only refresh if tab is visible
                 console.log("Auto-refreshing data...");
                 refreshCurrentData();
             }
-        }, 60000);
+        }, 600000);
         // -----------------------------
 
         // Set default dates
