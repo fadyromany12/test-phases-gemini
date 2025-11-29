@@ -2125,6 +2125,10 @@ function getOrCreateSheet(ss, name) {
       sheet.getRange("G:G").setNumberFormat("mm/dd/yyyy hh:mm:ss");
       sheet.getRange("J:J").setNumberFormat("mm/dd/yyyy hh:mm:ss");
     }
+    else if (name === SHEET_NAMES.offboarding) {
+      sheet.getRange("A1:O1").setValues([["RequestID", "EmployeeID", "Name", "Email", "Type", "Reason", "Status", "DirectManager", "ProjectManager", "DirectStatus", "ProjectStatus", "HRStatus", "RequestDate", "ExitDate", "InitiatedBy"]]);
+      sheet.setFrozenRows(1);
+    }
   }
 
   if (name === SHEET_NAMES.adherence) sheet.getRange("C:J").setNumberFormat("hh:mm:ss");
