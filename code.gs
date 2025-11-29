@@ -6559,121 +6559,103 @@ function executeOffboarding(ss, email, exitDate, reason) {
  */
 function webGetAnalyticsData(filter) {
   const { userEmail, userData, ss } = getAuthorizedContext('VIEW_FULL_DASHBOARD');
+  
+  // --- FIX: Adjust Dates to cover full day ---
   const startDate = new Date(filter.startDate);
+  startDate.setHours(0, 0, 0, 0); // Start of Day
+  
   const endDate = new Date(filter.endDate);
-  const targetEmail = filter.targetEmail;
+  endDate.setHours(23, 59, 59, 999); // End of Day
+  // ------------------------------------------
+
+  const targetEmails = filter.targetEmails || []; 
   const timeZone = Session.getScriptTimeZone();
 
-  // 1. Fetch Data Sources
+  const targetSet = new Set(targetEmails);
+  const processAll = targetSet.has('ALL');
+
   const adherenceData = getOrCreateSheet(ss, SHEET_NAMES.adherence).getDataRange().getValues();
   const otherCodesData = getOrCreateSheet(ss, SHEET_NAMES.otherCodes).getDataRange().getValues();
   const scheduleSheet = getOrCreateSheet(ss, SHEET_NAMES.schedule);
   const scheduleData = scheduleSheet.getDataRange().getValues();
-  const otData = getOrCreateSheet(ss, SHEET_NAMES.overtime).getDataRange().getValues();
-
-  // 2. Metrics Containers
+  
   let totalScheduledMins = 0;
   let totalWorkedMins = 0;
   let totalShrinkageMins = 0;
   let totalLateness = 0;
   
-  // Timeline Data Structure: { "YYYY-MM-DD": { "Agent Name": { events: [], flags: [], schedule: {} } } }
   const timeline = {};
 
-  // --- HELPER: Build Schedule Map for fast lookup ---
-  // Map Key: "email_dateString" -> Value: { start, end, b1s, b1e, ls, le, ... }
+  // Build Schedule Map
   const scheduleMap = {};
-  
   for (let i = 1; i < scheduleData.length; i++) {
     const row = scheduleData[i];
     const sEmail = (row[6] || "").toLowerCase();
-    const sDate = parseDate(row[1]); // Helper from before
+    
+    if (!processAll && !targetSet.has(sEmail)) continue;
+
+    const sDate = parseDate(row[1]);
     if (!sEmail || !sDate) continue;
     
     const dateKey = Utilities.formatDate(sDate, timeZone, "yyyy-MM-dd");
     const uniqueKey = `${sEmail}_${dateKey}`;
     
-    // Parse Times (Handle Date objects or strings)
-    const fmt = (v) => {
-      if (!v) return null;
-      if (v instanceof Date) return Utilities.formatDate(v, timeZone, "HH:mm");
-      return v.toString().substring(0, 5); // "09:00"
-    };
+    const fmt = (v) => (v instanceof Date) ? Utilities.formatDate(v, timeZone, "HH:mm") : (v ? v.toString().substring(0, 5) : null);
 
     scheduleMap[uniqueKey] = {
-      type: row[5], // Leave Type
-      start: fmt(row[2]),
-      end: fmt(row[4]),
-      b1_start: fmt(row[7]), // Col H
-      b1_end: fmt(row[8]),   // Col I
-      l_start: fmt(row[9]),  // Col J
-      l_end: fmt(row[10]),   // Col K
-      b2_start: fmt(row[11]), // Col L
-      b2_end: fmt(row[12])    // Col M
+      type: row[5],
+      start: fmt(row[2]), end: fmt(row[4]),
+      b1_start: fmt(row[7]), b1_end: fmt(row[8]),
+      l_start: fmt(row[9]),  l_end: fmt(row[10]),
+      b2_start: fmt(row[11]), b2_end: fmt(row[12])
     };
   }
 
-  // --- HELPER: Parse Time String to Decimal Hours (e.g. "09:30" -> 9.5) ---
   const toDec = (t) => {
     if (!t) return null;
     const [h, m] = t.split(':').map(Number);
     return h + (m / 60);
   };
 
-  // 3. Process Adherence (Actuals)
+  // Process Adherence
   for (let i = 1; i < adherenceData.length; i++) {
     const row = adherenceData[i];
     const rowDate = new Date(row[0]);
     const agentName = row[1];
     const email = userData.nameToEmail[agentName];
     
+    // Check Date Range (Now inclusive of time)
     if (rowDate < startDate || rowDate > endDate) continue;
-    if (targetEmail && targetEmail !== 'ALL' && email !== targetEmail) continue;
-    if (!email) continue;
+    
+    if (!email || (!processAll && !targetSet.has(email))) continue;
 
     const dateStr = Utilities.formatDate(rowDate, timeZone, "yyyy-MM-dd");
     const schedKey = `${email}_${dateStr}`;
     const sched = scheduleMap[schedKey] || { type: 'Day Off' };
 
-    // Initialize Timeline Entry
     if (!timeline[dateStr]) timeline[dateStr] = {};
     if (!timeline[dateStr][agentName]) {
-      timeline[dateStr][agentName] = { 
-        events: [], 
-        flags: [], 
-        schedule: sched // Attach schedule for ghost bar
-      };
+      timeline[dateStr][agentName] = { events: [], flags: [], schedule: sched };
     }
 
-    // --- A. Metrics Calculation ---
     const netHours = parseFloat(row[22]) || 0;
     totalWorkedMins += (netHours * 60);
     const tardySec = parseFloat(row[10]) || 0;
     totalLateness += (tardySec / 60);
     const leaveType = (row[13] || "").toLowerCase();
     
-    if (leaveType !== 'day off') totalScheduledMins += 540; // 9h est
+    if (leaveType !== 'day off') totalScheduledMins += 540;
     if (leaveType === 'absent' || (leaveType !== 'present' && leaveType !== 'day off' && leaveType !== '')) {
        totalShrinkageMins += 540;
     }
     totalShrinkageMins += (tardySec / 60);
 
-    // --- B. Timeline Events (Actuals) ---
-    const formatT = (v) => {
-        if (!v) return null;
-        if (v instanceof Date) return Utilities.formatDate(v, timeZone, "HH:mm");
-        return v.toString().substring(0, 8); // remove seconds maybe
-    };
-
+    const formatT = (v) => (v instanceof Date) ? Utilities.formatDate(v, timeZone, "HH:mm") : null;
     const login = formatT(row[2]);
     const logout = formatT(row[9]);
     
-    // 1. Work Session
-    if (login && logout) {
-       timeline[dateStr][agentName].events.push({ type: 'Work', start: login, end: logout, label: 'Shift' });
-    }
+    if (login && logout) timeline[dateStr][agentName].events.push({ type: 'Work', start: login, end: logout, label: 'Shift' });
 
-    // 2. Breaks
     const addBreak = (inT, outT, type, label) => {
         const s = formatT(inT);
         const e = formatT(outT);
@@ -6688,77 +6670,55 @@ function webGetAnalyticsData(filter) {
     const actLunch = addBreak(row[5], row[6], 'Lunch', 'Lunch');
     const actB2 = addBreak(row[7], row[8], 'Break', 'Last Break');
 
-    // --- C. ADHERENCE FLAGGING LOGIC ---
-    
-    // 1. Lateness
-    if (sched.start && login) {
-        if (toDec(login) > toDec(sched.start) + (5/60)) { // 5 min buffer
-            timeline[dateStr][agentName].flags.push({ type: 'Lateness', time: sched.start, msg: `Late: Login at ${login}` });
-        }
+    if (sched.start && login && toDec(login) > toDec(sched.start) + (5/60)) {
+        timeline[dateStr][agentName].flags.push({ type: 'Lateness', time: sched.start, msg: `Late: Login at ${login}` });
     }
-
-    // 2. Early Leave
-    if (sched.end && logout) {
-        if (toDec(logout) < toDec(sched.end) - (5/60)) { // 5 min buffer
-            timeline[dateStr][agentName].flags.push({ type: 'EarlyLeave', time: logout, msg: `Early Leave: Out at ${logout}` });
-        }
+    if (sched.end && logout && toDec(logout) < toDec(sched.end) - (5/60)) {
+        timeline[dateStr][agentName].flags.push({ type: 'EarlyLeave', time: logout, msg: `Early Leave: Out at ${logout}` });
     }
-
-    // 3. No Show (Scheduled Present, but no Login)
     if (sched.type === 'Present' && !login && leaveType !== 'Sick' && leaveType !== 'Annual') {
         timeline[dateStr][agentName].flags.push({ type: 'NoShow', time: '09:00', msg: 'No Show / Absent' });
     }
 
-    // 4. Break Window Violation
-    // Logic: If actual start is BEFORE scheduled start OR actual start is AFTER scheduled end
     const checkWindow = (actual, sStart, sEnd, name) => {
         if (actual && sStart && sEnd) {
             const actStart = toDec(actual.start);
             const winStart = toDec(sStart);
             const winEnd = toDec(sEnd);
-            
-            // Note: Window definition in Schedule sheet usually means "Window Start" and "Window End"
-            // If the user takes a break *starting* outside this window
             if (actStart < winStart || actStart > winEnd) {
-                timeline[dateStr][agentName].flags.push({ 
-                    type: 'Adherence', 
-                    time: actual.start, 
-                    msg: `${name} out of window (${sStart}-${sEnd})` 
-                });
+                timeline[dateStr][agentName].flags.push({ type: 'Adherence', time: actual.start, msg: `${name} out of window` });
             }
         }
     };
-
     checkWindow(actB1, sched.b1_start, sched.b1_end, "1st Break");
     checkWindow(actLunch, sched.l_start, sched.l_end, "Lunch");
     checkWindow(actB2, sched.b2_start, sched.b2_end, "Last Break");
   }
 
-  // 4. Process AUX Codes (Overlay)
+  // Process AUX
   for (let i = 1; i < otherCodesData.length; i++) {
       const row = otherCodesData[i];
       const rowDate = new Date(row[0]);
       const agentName = row[1];
       const email = userData.nameToEmail[agentName];
+      
+      // Check Date Range (Fix)
       if (rowDate < startDate || rowDate > endDate) continue;
-      if (targetEmail && targetEmail !== 'ALL' && email !== targetEmail) continue;
+      
+      if (!email || (!processAll && !targetSet.has(email))) continue;
       
       const dateStr = Utilities.formatDate(rowDate, timeZone, "yyyy-MM-dd");
       
-      // Ensure structure exists (if they had aux but no login)
       if (!timeline[dateStr]) timeline[dateStr] = {};
       if (!timeline[dateStr][agentName]) timeline[dateStr][agentName] = { events: [], flags: [], schedule: {} };
 
       const formatT = (v) => (v instanceof Date) ? Utilities.formatDate(v, timeZone, "HH:mm") : null;
       const s = formatT(row[3]);
-      const e = formatT(row[4]) || formatT(new Date()); // If active, use now
+      const e = formatT(row[4]) || formatT(new Date()); 
 
-      if (s) {
-          timeline[dateStr][agentName].events.push({ type: 'Aux', start: s, end: e, label: row[2] });
-      }
+      if (s) timeline[dateStr][agentName].events.push({ type: 'Aux', start: s, end: e, label: row[2] });
   }
 
-  // 5. Calculate Score
   const adherenceScore = totalScheduledMins > 0 ? ((totalWorkedMins / totalScheduledMins) * 100).toFixed(1) : 100;
   const shrinkageScore = totalScheduledMins > 0 ? ((totalShrinkageMins / totalScheduledMins) * 100).toFixed(1) : 0;
 
@@ -6782,58 +6742,81 @@ function formatTime(val) {
 /**
  * Generates Raw Data for Payroll CSV Export
  */
-function webGetPayrollExportData(startDateStr, endDateStr, targetUserEmail) {
+function webGetPayrollExportData(startDateStr, endDateStr, targetEmails) {
   const { userEmail, userData, ss } = getAuthorizedContext('VIEW_FULL_DASHBOARD');
   
   const startDate = new Date(startDateStr);
-  const endDate = new Date(endDateStr);
+  startDate.setHours(0, 0, 0, 0);
   
-  // 1. Fetch All Data Sources
-  const adherenceData = getOrCreateSheet(ss, SHEET_NAMES.adherence).getDataRange().getValues();
+  const endDate = new Date(endDateStr);
+  endDate.setHours(23, 59, 59, 999);
+
   const otData = getOrCreateSheet(ss, SHEET_NAMES.overtime).getDataRange().getValues();
-  // const scheduleData = ... (Fetched inside loop via helper if needed, or rely on Adherence "Leave Type")
+  const adherenceData = getOrCreateSheet(ss, SHEET_NAMES.adherence).getDataRange().getValues();
+
+  // Normalize target list
+  const emailList = Array.isArray(targetEmails) ? targetEmails : [targetEmails];
+  const targetSet = new Set(emailList.map(e => e.toLowerCase().trim()));
+  const processAll = targetSet.has('all');
 
   const exportRows = [];
 
-  // 2. Iterate Adherence (Primary Record of Day)
   for (let i = 1; i < adherenceData.length; i++) {
     const row = adherenceData[i];
-    const rowDate = new Date(row[0]);
-    const agentName = row[1];
-    const email = userData.nameToEmail[agentName];
     
-    if (rowDate < startDate || rowDate > endDate) continue;
-    if (targetUserEmail && targetUserEmail !== 'ALL' && email !== targetUserEmail) continue;
+    // 1. Robust Date Parsing (Handles DD/MM/YYYY strings and Date objects)
+    const rowDate = parseDate(row[0]); 
+    if (!rowDate) continue; // Skip invalid dates
 
-    // 3. Find Approved Overtime for this day
+    // 2. Date Filter
+    if (rowDate < startDate || rowDate > endDate) continue;
+
+    // 3. User Filter
+    const agentName = (row[1] || "").toString().trim();
+    // Try map lookup, fallback to raw check if name mismatch
+    let email = userData.nameToEmail[agentName]; 
+    if (!email) {
+       // Fallback: Try finding user by name in the userList directly if nameToEmail failed
+       const u = userData.userList.find(u => u.name.toLowerCase() === agentName.toLowerCase());
+       if (u) email = u.email;
+    }
+
+    if (!email) continue;
+    if (!processAll && !targetSet.has(email.toLowerCase())) continue;
+
+    // 4. Overtime Lookup
     let approvedOTHours = 0;
     let otType = "";
-    const dateStr = convertDateToString(rowDate).split('T')[0];
+    const dateStr = Utilities.formatDate(rowDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
     
-    // Look in OT Sheet
     for(let j=1; j<otData.length; j++) {
-        // Col 1 = EmpID. We need to map or check name/date.
-        // Better: user list map.
         const otEmpID = otData[j][1];
+        // Match by Employee ID (more reliable than email)
         const otUser = userData.userList.find(u => u.empID === otEmpID);
-        
-        if(otUser && otUser.email === email) {
-            const otDate = new Date(otData[j][3]);
-            const otDateStr = convertDateToString(otDate).split('T')[0];
-            
-            if (otDateStr === dateStr && otData[j][8] === 'Approved') {
-                approvedOTHours += parseFloat(otData[j][6] || 0);
-                otType = otData[j][12]; // Pre/Post/WorkDayOff
+        if(otUser && otUser.email.toLowerCase() === email.toLowerCase()) {
+            const otDate = parseDate(otData[j][3]); // Robust parse for OT too
+            if (otDate) {
+               const otDateStr = Utilities.formatDate(otDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
+               if (otDateStr === dateStr && otData[j][8] === 'Approved') {
+                   approvedOTHours += parseFloat(otData[j][6] || 0);
+                   otType = otData[j][12];
+               }
             }
         }
     }
 
-    // 4. Build Row Object
+    const formatTime = (val) => {
+        if (!val) return "";
+        if (val instanceof Date) return Utilities.formatDate(val, Session.getScriptTimeZone(), "HH:mm:ss");
+        if (typeof val === 'string' && val.includes('T')) return val.split('T')[1].substring(0,8);
+        return val.toString().substring(0,8);
+    };
+
     exportRows.push({
         Date: dateStr,
         Name: agentName,
         Email: email,
-        Status: row[13], // Leave Type (Present, Absent, Sick...)
+        Status: row[13],
         Login: formatTime(row[2]),
         Logout: formatTime(row[9]),
         NetWorkedHours: (parseFloat(row[22]) || 0).toFixed(2),
@@ -6846,7 +6829,6 @@ function webGetPayrollExportData(startDateStr, endDateStr, targetUserEmail) {
         IsAbsent: row[19]
     });
   }
-  
   return exportRows;
 }
 
