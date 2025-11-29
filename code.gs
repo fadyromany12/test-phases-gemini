@@ -6403,11 +6403,14 @@ function webGetOffboardingRequests() {
   const data = sheet.getDataRange().getValues();
   const results = [];
   
-  const isHR = userData.userRole === 'superadmin'; // Or check specific HR perm
+  const isHR = userData.userRole === 'superadmin'; 
   const isManager = ['admin','manager','project_manager'].includes(userData.userRole);
   
   for(let i=1; i<data.length; i++) {
+    try {
       const row = data[i];
+      if (!row || row.length === 0) continue; // Skip empty rows
+
       const targetEmail = row[3];
       const directMgr = row[7];
       const projectMgr = row[8];
@@ -6415,9 +6418,21 @@ function webGetOffboardingRequests() {
       let canView = false;
       if (isHR) canView = true;
       if (isManager && (userEmail === directMgr || userEmail === projectMgr)) canView = true;
-      if (userEmail === targetEmail) canView = true; // Agent sees own
+      if (userEmail === targetEmail) canView = true; 
       
       if (canView) {
+          // --- FIX: Safe Date Parsing ---
+          let exitDateStr = "N/A";
+          if (row[13]) {
+             try {
+               const d = new Date(row[13]);
+               if (!isNaN(d.getTime())) {
+                  exitDateStr = Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd");
+               }
+             } catch(e) {}
+          }
+          // -----------------------------
+
           results.push({
               id: row[0],
               name: row[2],
@@ -6427,10 +6442,13 @@ function webGetOffboardingRequests() {
               directStatus: row[9],
               projectStatus: row[10],
               hrStatus: row[11],
-              exitDate: convertDateToString(new Date(row[13])).split('T')[0],
+              exitDate: exitDateStr, // Uses the safe string
               initiatedBy: row[14]
           });
       }
+    } catch (e) {
+      Logger.log("Error reading offboarding row " + i + ": " + e.message);
+    }
   }
   return results.reverse();
 }
