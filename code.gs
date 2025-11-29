@@ -27,9 +27,10 @@ const SHEET_NAMES = {
   historyLogs: "Employee_History",
   warnings: "Warnings",
   financialEntitlements: "Financial_Entitlements",
-  rbac: "RBAC_Config",// NEW
+  rbac: "RBAC_Config",
   overtime: "Overtime_Requests",
-  breakConfig: "Break_Config"
+  breakConfig: "Break_Config",
+  offboarding: "Offboarding_Requests" // <--- NEW
 };
 // --- Break Time Configuration (in seconds) ---
 const PLANNED_BREAK_SECONDS = 15 * 60; // 15 minutes
@@ -6304,6 +6305,228 @@ function webGetProjectRequests(projectId) {
     return requests.slice(0, 50); // Return last 50
 }
 
+// ==========================================
+// === PHASE 7: OFFBOARDING WORKFLOW ===
+// ==========================================
+
+/**
+ * 1. Submit Resignation (Agent)
+ */
+function webSubmitResignation(reason, exitDate) {
+  const { userEmail, userData, ss } = getAuthorizedContext(null);
+  const sheet = getOrCreateSheet(ss, SHEET_NAMES.offboarding);
+  
+  // Check for existing pending request
+  const data = sheet.getDataRange().getValues();
+  for(let i=1; i<data.length; i++) {
+      if(data[i][3] === userEmail && data[i][6].includes("Pending")) {
+          throw new Error("You already have a pending resignation request.");
+      }
+  }
+
+  const user = userData.userList.find(u => u.email === userEmail);
+  const reqID = `EXIT-${new Date().getTime()}`;
+  
+  sheet.appendRow([
+      reqID,
+      user.empID,
+      user.name,
+      userEmail,
+      "Resignation",
+      reason,
+      "Pending Managers",
+      user.supervisor,
+      user.projectManager,
+      "Pending", // DirectStatus
+      "Pending", // ProjectStatus
+      "Pending", // HRStatus
+      new Date(),
+      new Date(exitDate),
+      "Agent"
+  ]);
+  
+  return "Resignation submitted. It will be reviewed by your managers and HR.";
+}
+
+/**
+ * 2. Submit Termination (Manager/HR)
+ */
+function webSubmitTermination(targetEmail, reason, exitDate) {
+  const { userEmail: adminEmail, userData, ss } = getAuthorizedContext('OFFBOARD_EMPLOYEE'); 
+  // 'OFFBOARD_EMPLOYEE' permission is for Managers & HR
+  
+  const sheet = getOrCreateSheet(ss, SHEET_NAMES.offboarding);
+  const targetUser = userData.userList.find(u => u.email === targetEmail);
+  
+  if (!targetUser) throw new Error("User not found.");
+  
+  // Logic: Who is initiating?
+  const isHR = userData.userRole === 'superadmin' || userData.userRole === 'hr_manager'; // Assuming HR role exists or superadmin
+  
+  const reqID = `TERM-${new Date().getTime()}`;
+  const status = isHR ? "Approved" : "Pending HR"; // HR terminates immediately, Managers need HR approval
+  const hrStatus = isHR ? "Approved" : "Pending";
+  
+  sheet.appendRow([
+      reqID,
+      targetUser.empID,
+      targetUser.name,
+      targetEmail,
+      "Termination",
+      reason,
+      status,
+      targetUser.supervisor,
+      targetUser.projectManager,
+      "N/A", // DirectStatus (Bypassed)
+      "N/A", // ProjectStatus (Bypassed)
+      hrStatus,
+      new Date(),
+      new Date(exitDate),
+      `Manager: ${userData.userName}`
+  ]);
+
+  if (isHR) {
+      // Execute Immediate Offboarding
+      executeOffboarding(ss, targetEmail, exitDate, reason);
+      return `Employee ${targetUser.name} has been terminated immediately.`;
+  }
+  
+  return `Termination request for ${targetUser.name} submitted to HR.`;
+}
+
+/**
+ * 3. Get Requests (For Manager/HR Dashboard)
+ */
+function webGetOffboardingRequests() {
+  const { userEmail, userData, ss } = getAuthorizedContext(null);
+  const sheet = getOrCreateSheet(ss, SHEET_NAMES.offboarding);
+  const data = sheet.getDataRange().getValues();
+  const results = [];
+  
+  const isHR = userData.userRole === 'superadmin'; // Or check specific HR perm
+  const isManager = ['admin','manager','project_manager'].includes(userData.userRole);
+  
+  for(let i=1; i<data.length; i++) {
+      const row = data[i];
+      const targetEmail = row[3];
+      const directMgr = row[7];
+      const projectMgr = row[8];
+      
+      let canView = false;
+      if (isHR) canView = true;
+      if (isManager && (userEmail === directMgr || userEmail === projectMgr)) canView = true;
+      if (userEmail === targetEmail) canView = true; // Agent sees own
+      
+      if (canView) {
+          results.push({
+              id: row[0],
+              name: row[2],
+              type: row[4],
+              reason: row[5],
+              status: row[6],
+              directStatus: row[9],
+              projectStatus: row[10],
+              hrStatus: row[11],
+              exitDate: convertDateToString(new Date(row[13])).split('T')[0],
+              initiatedBy: row[14]
+          });
+      }
+  }
+  return results.reverse();
+}
+
+/**
+ * 4. Action Request (Approve/Deny)
+ */
+function webActionOffboarding(reqId, action, comment) {
+  const { userEmail, userData, ss } = getAuthorizedContext('OFFBOARD_EMPLOYEE');
+  const sheet = getOrCreateSheet(ss, SHEET_NAMES.offboarding);
+  const data = sheet.getDataRange().getValues();
+  
+  let rowIdx = -1;
+  let reqRow = [];
+  for(let i=1; i<data.length; i++) {
+      if(data[i][0] === reqId) { rowIdx = i+1; reqRow = data[i]; break; }
+  }
+  
+  if (rowIdx === -1) throw new Error("Request not found.");
+  
+  const directMgr = reqRow[7];
+  const projectMgr = reqRow[8];
+  const isHR = userData.userRole === 'superadmin';
+  const isDirect = userEmail === directMgr;
+  const isProject = userEmail === projectMgr;
+  
+  // DENY Logic
+  if (action === 'Denied') {
+      sheet.getRange(rowIdx, 7).setValue("Denied");
+      // Log who denied? ideally yes
+      return "Request Denied.";
+  }
+  
+  // APPROVE Logic
+  if (reqRow[4] === 'Resignation') {
+      if (isDirect) sheet.getRange(rowIdx, 10).setValue("Approved");
+      if (isProject) sheet.getRange(rowIdx, 11).setValue("Approved");
+      if (isHR) sheet.getRange(rowIdx, 12).setValue("Approved");
+      
+      // Check status to advance
+      // We need to re-read or assume based on current action
+      const dStat = isDirect ? "Approved" : reqRow[9];
+      const pStat = isProject ? "Approved" : reqRow[10];
+      const hStat = isHR ? "Approved" : reqRow[11];
+      
+      if (dStat === 'Approved' && pStat === 'Approved' && hStat === 'Pending') {
+          sheet.getRange(rowIdx, 7).setValue("Pending HR");
+      } else if (dStat === 'Approved' && pStat === 'Approved' && hStat === 'Approved') {
+          sheet.getRange(rowIdx, 7).setValue("Approved");
+          // Finalize
+          executeOffboarding(ss, reqRow[3], reqRow[13], "Resignation Approved");
+          return "Resignation Finalized. Employee Offboarded.";
+      }
+  } else if (reqRow[4] === 'Termination') {
+      if (isHR) {
+          sheet.getRange(rowIdx, 12).setValue("Approved");
+          sheet.getRange(rowIdx, 7).setValue("Approved");
+          executeOffboarding(ss, reqRow[3], reqRow[13], "Termination Approved");
+          return "Termination Finalized.";
+      }
+  }
+  
+  return "Approval Recorded.";
+}
+
+// Helper: Execute Final Offboarding (Update Core, Log History)
+function executeOffboarding(ss, email, exitDate, reason) {
+    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
+    const data = dbSheet.getDataRange().getValues();
+    const userData = getUserDataFromDb(ss);
+    const row = userData.emailToRow[email];
+    
+    if (row) {
+        // Update Status (Col 27/AA based on new schema, check index)
+        // Schema: ..., ExitDate, Status
+        // Let's look up headers dynamically to be safe
+        const headers = data[0];
+        const statusIdx = headers.indexOf("Status");
+        const exitIdx = headers.indexOf("ExitDate");
+        
+        if (statusIdx > -1) dbSheet.getRange(row, statusIdx+1).setValue("Left");
+        if (exitIdx > -1) dbSheet.getRange(row, exitIdx+1).setValue(new Date(exitDate));
+        
+        // Log History
+        const histSheet = getOrCreateSheet(ss, SHEET_NAMES.historyLogs);
+        histSheet.appendRow([
+            `HIST-${new Date().getTime()}`,
+            userData.userList.find(u=>u.email===email)?.empID,
+            new Date(),
+            "Offboarding",
+            "Active",
+            "Left"
+        ]);
+    }
+}
+
 //.............................................................................................................................
 
 
@@ -6312,18 +6535,16 @@ function webGetProjectRequests(projectId) {
 
 
 
-// [code.gs] FIXED: Corrected History and Adherence Schemas
 function _MASTER_DB_FIXER() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   Logger.log("Starting Master DB Fixer...");
 
   const schema = {
-    // ... (Keep existing schemas) ...
+    // ... (Keep all existing schemas same as before) ...
     [SHEET_NAMES.rbac]: ["PermissionID", "Description", "superadmin", "admin", "manager", "project_manager", "financial_manager", "agent"],
     [SHEET_NAMES.employeesCore]: ["EmployeeID", "Name", "Email", "Role", "AccountStatus", "DirectManagerEmail", "FunctionalManagerEmail", "AnnualBalance", "SickBalance", "CasualBalance", "Gender", "EmploymentType", "ContractType", "JobLevel", "Department", "Function", "SubFunction", "GCMLevel", "Scope", "OffshoreOnshore", "DottedManager", "ProjectManagerEmail", "BonusPlan", "N_Level", "ExitDate", "Status"],
     [SHEET_NAMES.employeesPII]: ["EmployeeID", "HiringDate", "Salary", "IBAN", "Address", "Phone", "MedicalInfo", "ContractType", "NationalID", "PassportNumber", "SocialInsuranceNumber", "BirthDate", "PersonalEmail", "MaritalStatus", "DependentsInfo", "EmergencyContact", "EmergencyRelation", "BasicSalary", "VariablePay", "HourlyRate"],
     [SHEET_NAMES.financialEntitlements]: ["EntitlementID", "EmployeeEmail", "EmployeeName", "Type", "Amount", "Currency", "DueDate", "Status", "Description", "AddedBy", "DateAdded"],
-    // NEW: Entitlement Templates
     ["Entitlement_Templates"]: ["TemplateID", "Name", "Type", "DefaultAmount", "Currency", "Description", "Status"],
     [SHEET_NAMES.pendingRegistrations]: ["RequestID", "UserEmail", "UserName", "DirectManagerEmail", "FunctionalManagerEmail", "DirectStatus", "FunctionalStatus", "Address", "Phone", "RequestTimestamp", "HiringDate", "WorkflowStage"],
     [SHEET_NAMES.recruitment]: ["CandidateID", "Name", "Email", "Phone", "Position", "CV_Link", "Status", "Stage", "InterviewScores", "AppliedDate", "NationalID", "LangLevel", "SecondLang", "Referrer", "HR_Feedback", "Mgmt_Feedback", "Tech_Feedback", "Client_Feedback", "OfferStatus", "RejectionReason", "HistoryLog"],
@@ -6345,11 +6566,13 @@ function _MASTER_DB_FIXER() {
     [SHEET_NAMES.projectLogs]: ["LogID", "EmployeeID", "ProjectID", "Date", "HoursLogged"],
     [SHEET_NAMES.announcements]: ["AnnouncementID", "Content", "Status", "CreatedByEmail", "Timestamp"],
     [SHEET_NAMES.assets]: ["AssetID", "Type", "AssignedTo_EmployeeID", "DateAssigned", "Status"],
-    // OVERTIME UPDATE (18 Cols)
-    [SHEET_NAMES.overtime]: ["RequestID", "EmployeeID", "EmployeeName", "ShiftDate", "PlannedStart", "PlannedEnd", "RequestedHours", "Reason", "Status", "ManagerComment", "ActionBy", "ActionDate", "Type", "DirectManager", "ProjectManager", "DirectStatus", "ProjectStatus", "InitiatedBy"]
+    [SHEET_NAMES.overtime]: ["RequestID", "EmployeeID", "EmployeeName", "ShiftDate", "PlannedStart", "PlannedEnd", "RequestedHours", "Reason", "Status", "ManagerComment", "ActionBy", "ActionDate", "Type", "DirectManager", "ProjectManager", "DirectStatus", "ProjectStatus", "InitiatedBy"],
+    
+    // NEW OFFBOARDING SCHEMA
+    [SHEET_NAMES.offboarding]: ["RequestID", "EmployeeID", "Name", "Email", "Type", "Reason", "Status", "DirectManager", "ProjectManager", "DirectStatus", "ProjectStatus", "HRStatus", "RequestDate", "ExitDate", "InitiatedBy"]
   };
 
-  // Run Fixer (Copy-paste the loop from previous version here or ensure it exists)
+  // Run Fixer
   for (const [sheetName, headers] of Object.entries(schema)) {
     let sheet = getOrCreateSheet(ss, sheetName);
     const lastCol = sheet.getLastColumn();
@@ -6364,7 +6587,7 @@ function _MASTER_DB_FIXER() {
       sheet.getRange(1, startCol, 1, missingCols.length).setValues([missingCols]);
     }
   }
-  Logger.log("DB Fix Completed");
+  Logger.log("DB Fix Completed with Offboarding.");
 }
 
 
