@@ -3997,32 +3997,46 @@ function monthlyLeaveAccrual() {
  */
 function parseDate(dateInput) {
   if (!dateInput) return null;
-  if (dateInput instanceof Date) return dateInput; // Already a date
+  if (dateInput instanceof Date) return dateInput;
 
   try {
-    // Check if it's a serial number (e.g., 45576)
+    // 1. Handle Serial Number (Excel/Sheets style)
     if (typeof dateInput === 'number' && dateInput > 1) {
-      // Google Sheets/Excel serial date (days since Dec 30, 1899)
-      // Use UTC to avoid timezone issues during calculation.
-      const baseDate = new Date(Date.UTC(1899, 11, 30)); // 1899-12-30 UTC
+      const baseDate = new Date(Date.UTC(1899, 11, 30));
       baseDate.setUTCDate(baseDate.getUTCDate() + dateInput);
-      if (!isNaN(baseDate.getTime())) return baseDate;
+      return baseDate;
     }
     
-    // Check for MM/dd/yyyy format (common in US CSVs)
-    if (typeof dateInput === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateInput)) {
-      const parts = dateInput.split('/');
-      // new Date(year, monthIndex, day)
-      const newDate = new Date(parts[2], parts[0] - 1, parts[1]);
-      if (!isNaN(newDate.getTime())) return newDate;
+    // 2. Handle String with DD/MM/YYYY (with optional time)
+    if (typeof dateInput === 'string') {
+      // Regex looks for dd/mm/yyyy at the start
+      const match = dateInput.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (match) {
+        const day = parseInt(match[1], 10);
+        const month = parseInt(match[2], 10) - 1; // Months are 0-11
+        const year = parseInt(match[3], 10);
+        
+        // If it has time, try to parse it, otherwise default to 00:00
+        let hours = 0, minutes = 0, seconds = 0;
+        const timeMatch = dateInput.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+        if (timeMatch) {
+           hours = parseInt(timeMatch[1], 10);
+           minutes = parseInt(timeMatch[2], 10);
+           seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+        }
+        
+        const newDate = new Date(year, month, day, hours, minutes, seconds);
+        if (!isNaN(newDate.getTime())) return newDate;
+      }
     }
 
-    // Try standard parsing for ISO (yyyy-MM-dd) or other recognizable formats
-    const newDate = new Date(dateInput);
-    if (!isNaN(newDate.getTime())) return newDate;
+    // 3. Fallback to standard parser (ISO format yyyy-mm-dd)
+    const standardDate = new Date(dateInput);
+    if (!isNaN(standardDate.getTime())) return standardDate;
 
-    return null; // Invalid date
+    return null; 
   } catch(e) {
+    Logger.log("Date Parse Error: " + e.message);
     return null;
   }
 }
@@ -5931,43 +5945,46 @@ function webGetOvertimeRequests(filterStatus) {
   const isManager = ['admin','superadmin','manager','project_manager'].includes(userData.userRole);
   const mySubs = isManager ? new Set(webGetAllSubordinateEmails(userEmail)) : new Set();
 
-  // Robust Time Formatter
   const formatT = (val) => {
     if (val instanceof Date) return Utilities.formatDate(val, Session.getScriptTimeZone(), "HH:mm");
     if (typeof val === 'string' && val.includes('T')) return val.split('T')[1].substring(0,5);
+    // Try parsing if string date
+    const d = parseDate(val);
+    if (d) return Utilities.formatDate(d, Session.getScriptTimeZone(), "HH:mm");
     return val || "";
   };
 
-  // Iterate safely
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
-    if (!row || row.length === 0) continue; // Skip empty
+    if (!row || row.length === 0) continue;
 
     const ownerID = row[1];
     const ownerUser = userData.userList.find(u => u.empID === ownerID);
     const ownerEmail = ownerUser ? ownerUser.email : "";
     
-    // Visibility Check
-    let canView = (ownerEmail === userEmail); // Own requests
+    let canView = (ownerEmail === userEmail);
     if (!canView && isManager) {
         if (userData.userRole === 'superadmin') canView = true;
         else if (mySubs.has(ownerEmail)) canView = true;
     }
 
     if (canView) {
-        // Safe Property Access
         const status = row[8] || "Pending";
         
+        // Parse the ShiftDate (row[3]) safely
+        const shiftDateObj = parseDate(row[3]);
+        const shiftDateStr = shiftDateObj ? convertDateToString(shiftDateObj).split('T')[0] : "Invalid Date";
+
         if (filterStatus === 'All' || status === filterStatus || (filterStatus === 'Pending' && status.includes('Pending'))) {
             results.push({
                 id: row[0],
                 name: row[2],
-                date: convertDateToString(new Date(row[3])).split('T')[0],
+                date: shiftDateStr,
                 time: `${formatT(row[4])} - ${formatT(row[5])}`,
                 hours: row[6],
                 reason: row[7],
                 status: status,
-                type: row[12] || "N/A", // Handle missing Type
+                type: row[12] || "N/A",
                 directMgr: row[13] || "",
                 projectMgr: row[14] || "",
                 directStatus: row[15] || "Pending",
