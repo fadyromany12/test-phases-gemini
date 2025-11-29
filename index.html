@@ -2387,8 +2387,19 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
   <div id="fin-create-tmpl" class="form-container" style="display:none; margin-bottom:20px;">
       <h3>New Entitlement Template</h3>
       <div class="form-row">
-          <div class="form-group"><label>Template Name</label><input type="text" id="tmpl-name"></div>
-          <div class="form-group"><label>Type</label><select id="tmpl-type"><option>Bonus</option><option>Deduction</option><option>Allowance</option></select></div>
+          <div class="form-group"><label>Template Name</label><input type="text" id="tmpl-name" placeholder="e.g. Q1 Performance Bonus"></div>
+          <div class="form-group">
+            <label>Type</label>
+            <input type="text" id="tmpl-type" list="entitlement-types" placeholder="Select or type custom...">
+            <datalist id="entitlement-types">
+                <option value="Bonus">Bonus</option>
+                <option value="Deduction">Deduction</option>
+                <option value="Allowance">Allowance</option>
+                <option value="Variable Pay">Variable Pay</option>
+                <option value="One Time Payment">One Time Payment</option>
+                <option value="Overtime Payout">Overtime Payout</option>
+            </datalist>
+          </div>
       </div>
       <div class="form-row">
           <div class="form-group"><label>Default Amount</label><input type="number" id="tmpl-amount"></div>
@@ -2761,6 +2772,10 @@ function showTab(tabName) {
       // NEW: Load Break Config
       loadBreakConfig();
     
+    } else if (tabName === 'finance-admin') {
+      // NEW: Initialize the User Multi-Select for Finance
+      populateAdminDropdown(allUsersList, selfUserName, 'finance-apply', 'Select Target Users');
+      loadEntitlementTemplates();
     }
   }
 
@@ -3009,7 +3024,8 @@ function populateAdminDropdown(users, selfName, dropdownId, selfText, defaultVal
     'hr-offboard-user-select': 'hr-offboard-user-select-container',
     'ot-employee-select': 'ot-employee-select-container',
     // Inside populateAdminDropdown map:
-    'reporting-line-pm': 'reporting-line-pm-container'
+    'reporting-line-pm': 'reporting-line-pm-container',
+    'finance-apply': 'fin-apply-users-container'
   };
 
   // Special Handling for History (Multi-Select)
@@ -6611,28 +6627,35 @@ function loadMyWarnings() {
 // --- PHASE 3 JS FUNCTIONS ---
 
 function loadProjectsDropdown() {
-  const select = document.getElementById('current-project-select');
+  // 1. Punch Clock Project Select
+  const selectPunch = document.getElementById('current-project-select');
+  // 2. Project Admin Dashboard Select
+  const selectAdmin = document.getElementById('project-admin-select');
   
   google.script.run
     .withSuccessHandler(projects => {
-      select.innerHTML = '<option value="">-- Select Active Project --</option>';
-      if (projects.length === 0) {
-         // Optionally add a disabled option saying "No projects found"
-         const opt = document.createElement('option');
-         opt.text = "(No projects available)";
-         opt.disabled = true;
-         select.appendChild(opt);
-      }
-      projects.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p.id;
-        opt.text = p.name;
-        select.appendChild(opt);
-      });
+      const buildOptions = (sel) => {
+          if (!sel) return;
+          sel.innerHTML = '<option value="">-- Select Project --</option>';
+          if (projects.length === 0) {
+             const opt = document.createElement('option');
+             opt.text = "(No projects available)";
+             opt.disabled = true;
+             sel.appendChild(opt);
+          } else {
+             projects.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.text = p.name;
+                sel.appendChild(opt);
+             });
+          }
+      };
+
+      buildOptions(selectPunch);
+      buildOptions(selectAdmin);
     })
     .withFailureHandler(err => {
-      // This will show the actual error in the dropdown so you know what's wrong
-      select.innerHTML = `<option value="">Error: ${err.message}</option>`;
       console.error("Project Load Error:", err);
     })
     .webGetProjects();
