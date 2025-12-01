@@ -1,6924 +1,8872 @@
-
-// === CONFIGURATION ===
-const BUFFER_SHEET_ID = "19OLhS4OzvtgPsVHKVigjvrw3YR9K-sWf0U-TWvJ1Ftw"; 
-const SPREADSHEET_ID = "1FotLFASWuFinDnvpyLTsyO51OpJeKWtuG31VFje3Oik"; // Only the ID
-const SICK_NOTE_FOLDER_ID = "1Wu_eoEQ3FmfrzOdAwJkqMu4sPucLRu_0";
-const SHEET_NAMES = {
-  adherence: "Adherence Tracker",
-  employeesCore: "Employees_Core", 
-  employeesPII: "Employees_PII",   
-  assets: "Assets",                
-  projects: "Projects",            
-  projectLogs: "Project_Logs",     
-  schedule: "Schedules",
-  logs: "Logs",
-  otherCodes: "Other Codes",
-  leaveRequests: "Leave Requests", 
-  coachingSessions: "CoachingSessions", 
-  coachingScores: "CoachingScores", 
-  coachingTemplates: "CoachingTemplates", 
-  pendingRegistrations: "PendingRegistrations",
-  movementRequests: "MovementRequests",
-  announcements: "Announcements",
-  roleRequests: "Role Requests",
-  recruitment: "Recruitment_Candidates",
-  requisitions: "Requisitions",
-  performance: "Performance_Reviews", 
-  historyLogs: "Employee_History",
-  warnings: "Warnings",
-  financialEntitlements: "Financial_Entitlements",
-  rbac: "RBAC_Config",
-  overtime: "Overtime_Requests",
-  breakConfig: "Break_Config",
-  offboarding: "Offboarding_Requests" // <--- NEW
-};
-// --- Break Time Configuration (in seconds) ---
-const PLANNED_BREAK_SECONDS = 15 * 60; // 15 minutes
-const PLANNED_LUNCH_SECONDS = 30 * 60; // 30 minutes
-
-// --- Shift Cutoff Hour (e.g., 7 = 7 AM) ---
-const SHIFT_CUTOFF_HOUR = 7; 
-
-// ================= WEB APP ENTRY (PHASE 4 UPDATED) =================
-function doGet(e) {
-  return HtmlService.createTemplateFromFile('index')
-    .evaluate()
-    .setTitle('KOMPASS (Internal)')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
-}
-// ================= WEB APP APIs (UPDATED) =================
-
-function webPunch(action, targetUserName, adminTimestamp, projectId) { 
-  try {
-    // 1. SMART CONTEXT (Load Data)
-    const { userEmail, userName: selfName, userData, ss } = getAuthorizedContext(null);
-
-    // 2. Validate Target
-    const targetEmail = userData.nameToEmail[targetUserName];
-    if (!targetEmail) throw new Error(`User "${targetUserName}" not found.`);
-
-    // 3. PERMISSION CHECK
-    if (targetEmail.toLowerCase() !== userEmail.toLowerCase()) {
-        getAuthorizedContext('PUNCH_OTHERS'); // Throws error if missing permission
-    }
-
-    // 4. Run Logic
-    const puncherEmail = userEmail;
-    const resultMessage = punch(action, targetUserName, puncherEmail, adminTimestamp);
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <title>KOMPASS (Konecta Operations, Management & Personnel Self-Service)</title>
     
-    if (projectId || action === "Logout") {
-      logProjectHours(targetUserName, action, projectId, adminTimestamp);
-    }
-
-    // *** CRITICAL FIX: FORCE DATA SAVE BEFORE READING STATUS ***
-    SpreadsheetApp.flush(); 
-    // ***********************************************************
-
-    // 5. Get New Status
-    const timeZone = Session.getScriptTimeZone();
-    const now = adminTimestamp ? new Date(adminTimestamp) : new Date();
-    const shiftDate = getShiftDate(now, SHIFT_CUTOFF_HOUR);
-    const formattedDate = Utilities.formatDate(shiftDate, timeZone, "MM/dd/yyyy");
+    <!-- Fonts and Chart Libraries (Unaltered) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+    <script type="text/javascript">
+      google.charts.load('current', {'packages':['corechart', 'table']});
+      google.charts.setOnLoadCallback(() => { chartsLoaded = true; }); 
+    </script>
     
-    const newStatus = getLatestPunchStatus(targetEmail, targetUserName, shiftDate, formattedDate);
-    
-    return { message: resultMessage, newStatus: newStatus };
+    <!-- 
+    ==================================================================
+    == NEW: KOMPASS PRO STYLESHEET
+    == A complete redesign by a professional web app designer.
+    == This single <style> block contains all new layouts, colors,
+    == and responsive rules for the premium Konecta-themed UI.
+    ==================================================================
+    -->
+    <style>
+      /* --- Part 1: Color Palette & Root Variables --- */
+      :root {
+        /* Konecta Branding */
+        --konecta-dark: #2900c9; 
+        --konecta-blue: #00a9e0;
+        --konecta-yellow: #f0fa00; 
 
-  } catch (err) { return { message: "Error: " + err.message, newStatus: null };
-  }
-}
+        /* Core UI - NEW LIGHT MODE (Default for Agents) */
+        --font-sans: 'Inter', Arial, sans-serif;
+        --page-bg: #f4f6f8;             /* Clean, very light grey/blue */
+        --card-bg: #ffffff;
+        --header-bg: var(--konecta-dark);/* Branded header */
+        --sidebar-bg: #ffffff;
+        --text-color: #111827;           /* Dark, legible text */
+        --text-color-secondary: #6b7280;
+        --border-color: #e5e7eb;
+        --input-bg: #f9fafb;
+        --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+        --radius: 8px;
 
-// === NEW HELPER FOR PHASE 3 ===
-function logProjectHours(userName, action, newProjectId, customTime) {
-  const ss = getSpreadsheet();
-  const coreSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
-  const logSheet = getOrCreateSheet(ss, SHEET_NAMES.projectLogs);
-  const data = coreSheet.getDataRange().getValues();
-  
-  // 1. Find User Row & Current State
-  let userRowIndex = -1;
-  let currentProjectId = "";
-  let lastActionTime = null;
-  let empID = "";
+        /* Status Colors (Light) */
+        --status-pending-bg: #fefce8; 
+        --status-pending-text: #a16207;
+        --status-success-bg: #f0fdf4; 
+        --status-success-text: #166534;
+        --status-info-bg: #eff6ff; 
+        --status-info-text: #1d4ed8;
+        --status-error-bg: #fef2f2; 
+        --status-error-text: #b91c1c;
+      }
 
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][1] === userName) { // Match Name
-      userRowIndex = i + 1;
-      empID = data[i][0]; // EmployeeID is Col A
-      // We use Column K (Index 10) for "CurrentProject" and L (Index 11) for "LastActionTime"
-      // If they don't exist yet, we treat them as empty.
-      currentProjectId = data[i][10] || ""; 
-      lastActionTime = data[i][11] ? new Date(data[i][11]) : null;
-      break;
-    }
-  }
+      /* --- Part 2: Premium Dark Mode (Default for Admins) --- */
+      body.dark-mode {
+        --page-bg: #111827;              /* Deep, sophisticated navy/charcoal */
+        --card-bg: #1f2937;              /* Lighter card background */
+        --header-bg: #1f2937;            /* Header blends with card */
+        --sidebar-bg: #1f2937;
+        --text-color: #f9fafb;
+        --text-color-secondary: #9ca3af;
+        --border-color: #374151;
+        --input-bg: #374151;
+        --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+        --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+        --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.2);
 
-  if (userRowIndex === -1) return; // Should not happen
-
-  const now = customTime ? new Date(customTime) : new Date();
-
-  // 2. If they were working on a project, calculate duration and log it
-  if (currentProjectId && lastActionTime) {
-    const durationHours = (now.getTime() - lastActionTime.getTime()) / (1000 * 60 * 60);
-    
-    if (durationHours > 0) {
-      logSheet.appendRow([
-        `LOG-${new Date().getTime()}`, // LogID
-        empID,
-        currentProjectId,
-        new Date(), // Date of log
-        durationHours.toFixed(2) // Duration
-      ]);
-    }
-  }
-
-  // 3. Update State in Employees_Core
-  // If Logout, clear the project. If Login/Switch, set the new project.
-  if (action === "Logout") {
-    coreSheet.getRange(userRowIndex, 11).setValue(""); // Clear Project
-    coreSheet.getRange(userRowIndex, 12).setValue(""); // Clear Time
-  } else {
-    coreSheet.getRange(userRowIndex, 11).setValue(newProjectId); // Set New Project
-    coreSheet.getRange(userRowIndex, 12).setValue(now); // Set Start Time
-  }
-}
-
-function webSubmitScheduleRange(userEmail, userName, startDateStr, endDateStr, startTime, endTime, leaveType, shiftEndDate) {
-  try {
-    const { userEmail: puncherEmail } = getAuthorizedContext('EDIT_SCHEDULE');
-    return submitScheduleRange(puncherEmail, userEmail, userName, startDateStr, endDateStr, startTime, endTime, leaveType, shiftEndDate);
-  } catch (err) { return "Error: " + err.message; }
-}
-
-// === Web App APIs for Leave Requests ===
-function webSubmitLeaveRequest(requestObject, targetUserEmail) { // Now accepts optional target user
-  try {
-    const submitterEmail = Session.getActiveUser().getEmail().toLowerCase();
-    return submitLeaveRequest(submitterEmail, requestObject, targetUserEmail);
-  } catch (err) {
-    return "Error: " + err.message;
-  }
-}
-
-function webGetMyRequests_V2() {
-  try {
-    const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-    return getMyRequests(userEmail); 
-  } catch (err) {
-    Logger.log("Error in webGetMyRequests_V2: " + err.message);
-    throw new Error(err.message); 
-  }
-}
-
-function webGetAdminLeaveRequests(filter) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    return getAdminLeaveRequests(adminEmail, filter);
-  } catch (err) {
-    Logger.log("webGetAdminLeaveRequests Error: " + err.message);
-    return { error: err.message };
-  }
-}
-
-function webApproveDenyRequest(requestID, newStatus, reason) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    return approveDenyRequest(adminEmail, requestID, newStatus, reason);
-  } catch (err) {
-    return "Error: " + err.message;
-  }
-}
-
-// === Web App API for History ===
-function webGetAdherenceRange(userNames, startDateStr, endDateStr) {
-  try {
-    const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-    return getAdherenceRange(userEmail, userNames, startDateStr, endDateStr);
-  } catch (err) {
-    return { error: "Error: " + err.message };
-  }
-}
-
-// === Web App API for My Schedule ===
-function webGetMySchedule() {
-  try {
-    const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-    return getMySchedule(userEmail);
-  } catch (err) {
-    return { error: "Error: " + err.message };
-  }
-}
-
-// === Web App API for Admin Tools ===
-function webAdjustLeaveBalance(userEmail, leaveType, amount, reason) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    return adjustLeaveBalance(adminEmail, userEmail, leaveType, amount, reason);
-  } catch (err) {
-    return "Error: " + err.message;
-  }
-}
-
-function webImportScheduleCSV(csvData) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    return importScheduleCSV(adminEmail, csvData);
-  } catch (err) {
-    return "Error: " + err.message;
-  }
-}
-
-// === Web App API for Dashboard ===
-function webGetDashboardData(userEmails, date) { 
-  try {
-    const { userEmail: adminEmail } = getAuthorizedContext('VIEW_FULL_DASHBOARD');
-    return getDashboardData(adminEmail, userEmails, date);
-  } catch (err) {
-    Logger.log("webGetDashboardData Error: " + err.message);
-    throw new Error(err.message);
-  }
-}
-
-// --- MODIFIED: "My Team" Functions ---
-function webSaveMyTeam(userEmails) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    return saveMyTeam(adminEmail, userEmails);
-  } catch (err) {
-    return "Error: " + err.message;
-  }
-}
-
-function webGetMyTeam() {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    return getMyTeam(adminEmail);
-  } catch (err) {
-    return "Error: " + err.message;
-  }
-}
-
-function webSubmitMovementRequest(userToMoveEmail, newSupervisorEmail, newProjectManagerEmail) {
-  const { userEmail: requesterEmail, userData, ss } = getAuthorizedContext('MANAGE_HIERARCHY');
-  
-  const userToMoveName = userData.emailToName[userToMoveEmail];
-  const newSupervisorName = userData.emailToName[newSupervisorEmail];
-  
-  // 1. Validation
-  if (!userToMoveName) throw new Error(`User to move (${userToMoveEmail}) not found.`);
-  if (!newSupervisorName) throw new Error(`Receiving supervisor (${newSupervisorEmail}) not found.`);
-  
-  // FIX: Ensure Project Manager is present. 
-  // If "Keep" was selected but user had no PM, frontend might send blank.
-  if (!newProjectManagerEmail || newProjectManagerEmail === "" || newProjectManagerEmail === "undefined") {
-     throw new Error("Project Manager selection is required. If the user has no current PM, please select 'Change' and assign one.");
-  }
-
-  const requesterRole = userData.emailToRole[requesterEmail];
-  const fromSupervisorEmail = userData.emailToSupervisor[userToMoveEmail];
-  const moveSheet = getOrCreateSheet(ss, SHEET_NAMES.movementRequests);
-
-  // 2. SUPER ADMIN LOGIC: Immediate Execution
-  if (requesterRole === 'superadmin') {
-      const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
-      const userDBRow = userData.emailToRow[userToMoveEmail];
+        /* Status Colors (Dark) */
+        --status-pending-bg: #423b0b; 
+        --status-pending-text: #fef08a;
+        --status-success-bg: #14361e; 
+        --status-success-text: #bbf7d0;
+        --status-info-bg: #1e3a8a; 
+        --status-info-text: #bfdbfe;
+        --status-error-bg: #5f1414; 
+        --status-error-text: #fecaca;
+      }
       
-      if (!userDBRow) throw new Error("Database row not found for user.");
-
-      // Update Employees_Core
-      // Direct Manager is Column F (Index 6)
-      // Functional/Project Manager is Column G (Index 7)
-      dbSheet.getRange(userDBRow, 6).setValue(newSupervisorEmail);
-      dbSheet.getRange(userDBRow, 7).setValue(newProjectManagerEmail);
-
-      // Log as "Approved" in Movement Requests
-      moveSheet.appendRow([
-        `MOV-${new Date().getTime()}`,
-        "Approved", // Auto-approved
-        userToMoveEmail,
-        userToMoveName,
-        fromSupervisorEmail,
-        newSupervisorEmail,
-        new Date(), // Request Time
-        new Date(), // Action Time
-        requesterEmail, // Action By
-        requesterEmail, // Requested By
-        newProjectManagerEmail
-      ]);
       
-      // Log to System Logs
-      const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-      logsSheet.appendRow([new Date(), userToMoveName, requesterEmail, "Movement Auto-Approved", `Moved to ${newSupervisorName} / ${newProjectManagerEmail}`]);
-
-      return `Success: ${userToMoveName} has been moved to ${newSupervisorName} immediately.`;
-  } 
-  
-  // 3. ADMIN LOGIC: Submit for Approval
-  else {
-      moveSheet.appendRow([
-        `MOV-${new Date().getTime()}`,
-        "Pending",
-        userToMoveEmail,
-        userToMoveName,
-        fromSupervisorEmail,
-        newSupervisorEmail,
-        new Date(),
-        "", // ActionTimestamp
-        "", // ActionBy
-        requesterEmail,
-        newProjectManagerEmail
-      ]);
       
-      return `Request submitted. Waiting for approval from ${newSupervisorName} (or Superadmin).`;
-  }
-}
-/**
- * NEW: Fetches pending movement requests for the admin or their subordinates.
- */
-function webGetPendingMovements() {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
 
-    // *** ADD THIS LINE TO FIX THE ERROR ***
-    const adminRole = userData.emailToRole[adminEmail] || 'agent';
-    
-    // Get all subordinates (direct and indirect)
-    const mySubordinateEmails = new Set(webGetAllSubordinateEmails(adminEmail));
-    const moveSheet = getOrCreateSheet(ss, SHEET_NAMES.movementRequests);
-    const data = moveSheet.getDataRange().getValues();
-    const results = [];
+      /* --- Global Styles --- */
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+      
+      body, html {
+        font-family: var(--font-sans);
+        margin: 0; 
+        padding: 0;
+        background-color: var(--page-bg);
+        color: var(--text-color);
+        min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      
+      h1, h2, h3, h4, strong {
+        color: var(--text-color);
+        font-weight: 600;
+      }
+      h2 { font-size: 1.5rem; margin: 0 0 1rem 0; }
+      h3 { font-size: 1.25rem; margin: 1.5rem 0 1rem 0; color: var(--konecta-blue); }
 
-    // Get headers
-    const headers = data[0];
-    const statusIndex = headers.indexOf("Status");
-    const toSupervisorIndex = headers.indexOf("ToSupervisorEmail");
-    
-    if (statusIndex === -1 || toSupervisorIndex === -1) {
-      throw new Error("MovementRequests sheet is missing required columns.");
+      /* --- App Loader --- */
+      #app-loader {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: var(--page-bg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        transition: opacity 0.5s ease;
+      }
+      .spinner {
+        width: 48px;
+        height: 48px;
+        border: 4px solid var(--border-color);
+        border-top-color: var(--konecta-blue); /* Use bright blue for spinner */
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+
+      /* --- Main Header --- */
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 24px;
+        background-color: var(--header-bg);
+        border-bottom: 1px solid var(--border-color);
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        height: 75px; /* MODIFIED: Increased height for new logo */
+      }
+      body[data-role="agent"] header {
+        border-bottom-color: var(--konecta-dark);
+      }
+      body.dark-mode header {
+        background-color: var(--header-bg);
+      }
+      
+      .header-brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        overflow: hidden;
+      }
+      .logo-container {
+        width: 150px; /* MODIFIED: Increased width */
+        height: 50px; /* MODIFIED: Increased height */
+        border-radius: 6px;
+        overflow: hidden;
+        background-color: #ffffff; /* Always white for logo BG */
+        flex-shrink: 0; 
+      }
+      .header-logo {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        padding: 4px; 
+        box-sizing: border-box; 
+      }
+      
+      header h1 { 
+        color: #ffffff; /* White title on dark header */
+        font-size: 1.25rem;
+        font-weight: 600; 
+        margin: 0;
+        white-space: nowrap;
+      }
+      body.dark-mode header h1 {
+        color: var(--text-color);
+      }
+      
+      .header-kap {
+        color: var(--konecta-blue); /* Bright blue KAP */
+        font-weight: 400;
+        font-size: 0.8rem;
+        margin-left: 8px;
+        opacity: 0.8;
+      }
+      body.dark-mode .header-kap {
+        color: var(--konecta-blue);
+      }
+      
+      .header-controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      
+      #header-refresh-button, #header-role-request-button {
+        background: transparent;
+        border: 1px solid var(--border-color);
+        color: var(--text-color-secondary);
+        cursor: pointer;
+        height: 36px;
+        width: 36px;
+        padding: 0;
+        border-radius: var(--radius); 
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: var(--shadow-sm);
+      }
+      body[data-role="agent"] #header-refresh-button,
+      body[data-role="agent"] #header-role-request-button {
+         border-color: #ffffff44;
+         color: #ffffffcc;
+      }
+      body[data-role="agent"] #header-refresh-button:hover,
+      body[data-role="agent"] #header-role-request-button:hover {
+         background-color: #ffffff1a;
+      }
+      
+      #header-role-request-button { display: none; }
+      
+      #header-refresh-button:hover, #header-role-request-button:hover {
+        background-color: var(--card-bg);
+        border-color: var(--konecta-blue);
+      }
+      #header-role-request-button img, #header-refresh-button img {
+        width: 18px; 
+        height: 18px;
+      }
+      body[data-role="agent"] #header-role-request-button img,
+      body[data-role="agent"] #header-refresh-button img {
+        filter: invert(1);
+      }
+      body.dark-mode #header-role-request-button img,
+      body.dark-mode #header-refresh-button img {
+        filter: invert(1);
+      }
+
+      #header-refresh-button.loading img { animation: spin 1s linear infinite; }
+      #header-role-request-button.loading img { animation: spin 1s linear infinite; }
+      #header-role-request-button { position: relative; }
+      #header-role-request-button.has-notification::after {
+        content: '';
+        position: absolute;
+        top: 6px; right: 6px;
+        width: 8px; height: 8px;
+        background-color: #ea4335; 
+        border-radius: 50%;
+        border: 2px solid var(--header-bg);
+      }
+
+      /* Dark Mode Toggle */
+      .dark-mode-toggle-wrapper {
+        display: flex;
+        align-items: center;
+        height: 34px;
+      }
+      #dark-mode-toggle { opacity: 0; width: 0; height: 0; }
+      .switch-label {
+        position: relative;
+        display: block;
+        width: 52px;
+        height: 28px;
+        border-radius: 14px;
+        background-color: var(--input-bg);
+        border: 1px solid var(--border-color);
+        cursor: pointer;
+        box-shadow: var(--shadow-sm);
+      }
+      body[data-role="agent"] .switch-label {
+        background-color: #ffffff22;
+        border-color: #ffffff44;
+      }
+      .switch-label:before {
+        content: '';
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background-color: #ffffff;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        transition: transform 0.3s ease;
+      }
+      .sun-icon, .moon-icon {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 14px;
+        transition: opacity 0.3s ease;
+        color: var(--konecta-yellow);
+      }
+      .sun-icon { left: 6px; opacity: 1; color: #f59e0b; }
+      .moon-icon { right: 6px; opacity: 0; color: var(--konecta-blue); }
+      #dark-mode-toggle:checked + .switch-label { background-color: var(--konecta-dark); }
+      #dark-mode-toggle:checked + .switch-label:before { transform: translateX(24px); }
+      #dark-mode-toggle:checked + .switch-label .sun-icon { opacity: 0; }
+      #dark-mode-toggle:checked + .switch-label .moon-icon { opacity: 1; }
+
+      /* --- Part 4: New App Layout (Sidebar + Content) --- */
+      .app-container {
+        display: flex;
+        flex-grow: 1;
+        height: calc(100vh - 75px); /* MODIFIED: Full height minus new header height */
+      }
+      
+      #app-sidebar {
+        width: 240px;
+        background-color: var(--sidebar-bg);
+        border-right: 1px solid var(--border-color);
+        padding: 16px;
+        overflow-y: auto;
+        flex-shrink: 0;
+        transition: width 0.3s ease;
+      }
+      
+      #app-content {
+        flex-grow: 1;
+        padding: 32px;
+        overflow-y: auto;
+      }
+      
+      .tab-panel {
+      display: none;
+      max-width: 1280px; /* Max content width for readability */
+      margin: 0 auto;
+      
+      /* --- ADD THESE LINES --- */
+      background-color: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: var(--shadow-sm);
     }
+      #punch-panel { display: block; }
 
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      const status = row[statusIndex];
-      const toSupervisorEmail = (row[toSupervisorIndex] || "").toLowerCase();
+      /* --- Part 5: New Vertical Navigation --- */
+      .nav-group {
+        margin-bottom: 16px;
+      }
+      .nav-group-title {
+        padding: 0 12px;
+        margin-bottom: 8px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--text-color-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      
+      .tab-button {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      border-radius: 6px;
+      background-color: transparent;
+      color: var(--text-color);
+      width: 100%;
+      margin-bottom: 4px;
+      text-align: left;
+      transition: background-color 0.2s ease, color 0.2s ease;
+      justify-content: flex-start; /* <-- ADD THIS LINE */
+    }
+      .tab-button .nav-icon {
+        width: 20px;
+        height: 20px;
+        flex-shrink: 0;
+        stroke-width: 2;
+        color: var(--text-color-secondary);
+        margin: 0;
+      }
+      .tab-button:hover {
+        background-color: var(--input-bg);
+        color: var(--text-color);
+      }
+      .tab-button:hover .nav-icon {
+        color: var(--text-color);
+      }
+      
+      .tab-button.active {
+        background-color: var(--konecta-blue);
+        color: white;
+        font-weight: 600;
+      }
+      body.dark-mode .tab-button.active {
+        background-color: var(--konecta-blue);
+        color: white;
+      }
+      .tab-button.active .nav-icon {
+        color: white;
+      }
+      
+      /* Hide nav buttons by default, JS will show them */
+      #dashboard-tab-button, #my-schedule-tab-button,
+      #leave-approval-tab-button, #history-report-tab-button, #schedule-tab-button,
+      #admin-tools-tab-button, #reporting-line-tab-button, #coaching-tab-button,
+      #coaching-admin-tab-button, #registration-admin-tab-button, #announcements-admin-tab-button {
+        display: none;
+      }
+      
+      /* --- Part 6: New Button Styles --- */
+      button, .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0; /* Remove default margin */
+        padding: 10px 16px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        border-radius: var(--radius);
+        transition: all 0.2s ease;
+        border: 1px solid transparent;
+        min-width: 100px;
+        white-space: nowrap;
+      }
+      button:hover {
+        transform: translateY(-1px);
+        box-shadow: var(--shadow-md);
+      }
+      
+      /* Primary Button (Konecta Dark) */
+      button.btn-primary, .submit-btn-green, .approve-btn {
+        background-color: var(--konecta-dark);
+        color: white;
+        border-color: var(--konecta-dark);
+        box-shadow: var(--shadow-sm);
+      }
+      button.btn-primary:hover, .submit-btn-green:hover, .approve-btn:hover {
+        background-color: #3a00e0;
+        border-color: #3a00e0;
+      }
+      
+      /* Secondary Button (Konecta Blue) */
+      button.btn-secondary, .view-btn, .load-btn, .team-btn, .save-btn {
+        background-color: var(--konecta-blue);
+        color: white;
+        border-color: var(--konecta-blue);
+        box-shadow: var(--shadow-sm);
+      }
+      button.btn-secondary:hover, .view-btn:hover, .load-btn:hover, .team-btn:hover, .save-btn:hover {
+        background-color: #0095c7;
+        border-color: #0095c7;
+      }
 
-      if (status === 'Pending') {
-        let canView = false;
-        
-        // --- NEW VIEWING LOGIC ---
-        if (adminRole === 'superadmin') {
-          // Superadmin can see ALL pending requests
-          canView = true;
-        } else if (toSupervisorEmail === adminEmail || mySubordinateEmails.has(toSupervisorEmail)) {
-          // Admin can only see requests for themselves or their subordinates
-          canView = true;
+      /* Destructive Button (Red) */
+      button.btn-danger, .deny-btn {
+        background-color: #dc2626;
+        color: white;
+        border-color: #dc2626;
+        box-shadow: var(--shadow-sm);
+      }
+      button.btn-danger:hover, .deny-btn:hover {
+        background-color: #b91c1c;
+        border-color: #b91c1c;
+      }
+
+      /* Ghost/Outline Button (Default) */
+      #other-buttons button, .export-btn {
+        background-color: transparent;
+        color: var(--text-color-secondary);
+        border-color: var(--border-color);
+        box-shadow: var(--shadow-sm);
+      }
+      #other-buttons button:hover, .export-btn:hover {
+        background-color: var(--input-bg);
+        color: var(--text-color);
+        border-color: var(--border-color);
+      }
+      
+      /* Specific button groups */
+      #buttons, #other-buttons {
+        text-align: center;
+        padding: 0;
+        background: none;
+        box-shadow: none;
+      }
+      #buttons button, #other-buttons button {
+        margin: 5px;
+      }
+      
+      .button-group {
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 16px;
+        margin-bottom: 16px;
+      }
+      .button-group:last-of-type { border-bottom: none; }
+      
+      button:disabled {
+        background-color: var(--border-color);
+        color: var(--text-color-secondary);
+        opacity: 0.7;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+        border-color: var(--border-color);
+      }
+      body.dark-mode button:disabled {
+        background-color: var(--input-bg);
+      }
+
+      /* --- Status & Alert Messages --- */
+      .status-message {
+        margin: 16px 0;
+        padding: 12px 16px;
+        border-radius: var(--radius);
+        font-size: 0.9rem;
+        font-weight: 500;
+        text-align: center;
+        border: 1px solid transparent;
+        visibility: hidden;
+        opacity: 0;
+        transition: opacity 0.3s, transform 0.3s;
+        transform: translateY(10px);
+      }
+      .status-message.visible {
+        visibility: visible;
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .status-message.success { background-color: var(--status-success-bg); color: var(--status-success-text); border-color: var(--status-success-text); }
+      .status-message.error { background-color: var(--status-error-bg); color: var(--status-error-text); border-color: var(--status-error-text); }
+      .status-message.processing { background-color: var(--status-info-bg); color: var(--status-info-text); border-color: var(--status-info-text); }
+      .status-message.warning { background-color: var(--status-pending-bg); color: var(--status-pending-text); border-color: var(--status-pending-text); }
+
+      #announcement-banner {
+        background-color: var(--status-pending-bg) !important;
+        color: var(--status-pending-text) !important;
+        border-color: var(--status-pending-text) !important;
+      }
+      #announcement-banner strong,
+      #announcement-banner button {
+        color: var(--status-pending-text) !important;
+      }
+      
+      /* --- Form & Input Styles --- */
+      .form-container {
+        padding: 24px;
+        background-color: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-sm);
+      }
+      .form-group { margin-bottom: 16px; }
+      .form-group label {
+        display: block;
+        font-weight: 500;
+        font-size: 0.875rem;
+        margin-bottom: 6px;
+        color: var(--text-color);
+      }
+      .form-group select, .form-group input, .form-group textarea {
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 0.9rem;
+        border-radius: 6px;
+        border: 1px solid var(--border-color);
+        box-sizing: border-box;
+        background-color: var(--input-bg);
+        color: var(--text-color);
+        font-family: var(--font-sans);
+        box-shadow: var(--shadow-sm);
+      }
+      .form-group select:focus, .form-group input:focus, .form-group textarea:focus {
+        outline: 2px solid var(--konecta-blue);
+        outline-offset: 1px;
+        border-color: var(--konecta-blue);
+      }
+      .form-group input[type="date"], .form-group input[type="time"] {
+        color-scheme: var(--dark-mode-scheme, light); 
+      }
+      body.dark-mode { --dark-mode-scheme: dark; }
+      .form-row { display: flex; flex-wrap: wrap; gap: 16px; }
+      .form-row .form-group { flex: 1; min-width: 150px; }
+      .form-group small {
+        display: block;
+        margin-top: 6px;
+        font-size: 0.8rem;
+        color: var(--text-color-secondary);
+      }
+      
+      /* --- Section divider --- */
+      .section-divider {
+        border: 0;
+        border-top: 1px solid var(--border-color);
+        margin: 32px 0;
+      }
+      
+      /* --- Card, List & Table Styles --- */
+      .info-card {
+        margin-bottom: 20px; 
+        padding: 16px;
+        background-color: var(--input-bg);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius);
+        text-align: center;
+        font-size: 1rem;
+        font-weight: 500;
+      }
+      #admin-panel {
+         background-color: var(--input-bg);
+         border: 1px solid var(--border-color);
+         border-radius: var(--radius);
+      }
+      
+      #leave-balances {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+      .balance-item {
+        background-color: var(--input-bg);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius);
+        padding: 16px;
+        text-align: center;
+      }
+      .balance-item p {
+        margin: 0;
+        font-size: 0.875rem;
+        color: var(--text-color-secondary);
+        font-weight: 500;
+      }
+      .balance-item .balance-days {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--konecta-dark);
+        display: block;
+        margin-top: 4px;
+      }
+      body.dark-mode .balance-item .balance-days {
+        color: var(--konecta-blue);
+      }
+
+      .request-list {
+        margin-top: 24px;
+        padding-top: 0;
+      }
+      .request-list-item {
+        background-color: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius);
+        padding: 16px;
+        margin-bottom: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 16px;
+        box-shadow: var(--shadow-sm);
+      }
+      .request-list-item .item-details { flex: 1; min-width: 250px; }
+      .request-list-item .item-details h4 {
+        margin: 0 0 8px 0;
+        font-size: 1.1rem;
+      }
+      .request-list-item .item-details p {
+        margin: 4px 0;
+        font-size: 0.9rem;
+        color: var(--text-color-secondary);
+      }
+      .request-list-item .item-actions {
+        min-width: 150px;
+        text-align: right;
+        flex-shrink: 0;
+      }
+      
+      /* Status Badges */
+      .status-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        border-radius: 99px;
+        text-transform: uppercase;
+      }
+      .status-pending { background-color: var(--status-pending-bg); color: var(--status-pending-text); }
+      .status-approved { background-color: var(--status-success-bg); color: var(--status-success-text); }
+      .status-denied { background-color: var(--status-error-bg); color: var(--status-error-text); }
+      .status-Logged-In { background-color: var(--status-success-bg); color: var(--status-success-text); }
+      .status-On-Break-Other { background-color: var(--status-info-bg); color: var(--status-info-text); }
+      .status-On-Leave { background-color: var(--status-error-bg); color: var(--status-error-text); }
+      .status-Absent { background-color: var(--status-error-bg); color: var(--status-error-text); }
+      .status-Pending-Login { background-color: var(--status-pending-bg); color: var(--status-pending-text); }
+      .status-Logged-Out { background-color: var(--status-error-bg); color: var(--status-error-text); }
+
+      /* Report Tables */
+      #history-report-display, #my-schedule-display {
+        margin-top: 20px;
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius);
+        overflow-x: auto; 
+        box-shadow: var(--shadow-sm);
+      }
+      .report-table, .schedule-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+      }
+      .report-table th, .report-table td, .schedule-table th, .schedule-table td {
+        border-bottom: 1px solid var(--border-color);
+        padding: 12px 16px;
+        text-align: left;
+        color: var(--text-color);
+      }
+      .report-table th, .schedule-table th {
+        background-color: var(--input-bg);
+        font-weight: 600;
+        font-size: 0.8rem;
+        color: var(--text-color-secondary);
+        text-transform: uppercase;
+      }
+      .report-table tr:last-child td, .schedule-table tr:last-child td {
+        border-bottom: none;
+      }
+      .report-table tr:hover, .schedule-table tr:hover {
+        background-color: var(--input-bg);
+      }
+      .schedule-table .day-today {
+        font-weight: 600;
+        background-color: var(--konecta-yellow);
+        color: #333;
+      }
+      body.dark-mode .schedule-table .day-today {
+        color: #111827;
+      }
+      
+      /* --- Dashboard Styles --- */
+      #dashboard-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); 
+          gap: 24px;
+      }
+      .dashboard-card {
+        background-color: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius);
+        padding: 24px;
+        box-shadow: var(--shadow-md);
+      }
+      .dashboard-card.full-width { grid-column: 1 / -1; }
+      .dashboard-card h3 {
+        margin: 0 0 16px 0;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--border-color);
+        font-size: 1.1rem;
+      }
+      .chart-container, .table-container {
+        width: 100%;
+        min-height: 350px;
+        overflow-y: auto;
+      }
+      .dashboard-list-container {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding-top: 0; 
+      }
+      .dashboard-detail-item {
+        background-color: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 12px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px 16px;
+        font-size: 0.9rem;
+      }
+      .dashboard-detail-item .detail-label {
+        font-weight: 500;
+        color: var(--text-color-secondary);
+      }
+      .dashboard-detail-item .detail-value {
+        font-weight: 600;
+        color: var(--text-color);
+        text-align: right;
+      }
+      .dashboard-detail-item h4 {
+        grid-column: 1 / -1;
+        margin: 0;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border-color);
+        color: var(--konecta-blue);
+        font-size: 1rem;
+      }
+      .dashboard-leave-item {
+        background-color: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .dashboard-leave-item .item-details h4 {
+        margin: 0 0 4px 0;
+        font-size: 0.95rem;
+      }
+      .dashboard-leave-item .item-details p { margin: 0; font-size: 0.85rem; }
+      
+      .agent-status-item {
+        background-color: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .agent-status-item strong { font-size: 0.95rem; font-weight: 500; }
+      .status-tag {
+        padding: 4px 10px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        border-radius: 99px;
+      }
+
+      /* --- Hierarchy Tree View Styles --- */
+      #dashboard-hierarchy-container { flex: 2; min-width: 300px; }
+      #hierarchy-tree-view {
+          padding: 8px;
+          max-height: 250px;
+          overflow-y: auto;
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius);
+          background-color: var(--card-bg);
+      }
+      .tree-node {
+          padding: 6px;
+          cursor: pointer;
+          user-select: none;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 0.9rem;
+          border-radius: 4px;
+      }
+      .tree-node:hover { background-color: var(--input-bg); }
+      .tree-node.selected {
+          background-color: var(--konecta-dark);
+          color: white;
+          font-weight: 500;
+      }
+      .tree-node.selected .tree-label { color: white !important; }
+      .tree-node.selected .role-icon { filter: brightness(0) invert(1); }
+      .tree-label { flex-grow: 1; display: flex; align-items: center; gap: 6px; }
+      .toggle-icon {
+          width: 16px;
+          height: 16px;
+          transition: transform 0.2s;
+          flex-shrink: 0;
+          opacity: 0.5;
+      }
+      .collapsed .toggle-icon { transform: rotate(-90deg); }
+      .tree-node[data-has-children="false"] .toggle-icon { visibility: hidden; }
+      .subordinates-list {
+          margin-left: 14px;
+          padding-left: 8px;
+          border-left: 1px solid var(--border-color);
+          display: none;
+      }
+      .role-icon { width: 14px; height: 14px; }
+      .role-icon.agent { color: var(--konecta-blue); }
+      .role-icon.admin { color: var(--konecta-yellow); }
+      .role-icon.superadmin { color: var(--konecta-dark); }
+      body.dark-mode .role-icon.admin { color: #facc15; } /* Brighter yellow for dark bg */
+
+      /* --- Coaching & Admin Panel Styles --- */
+      .qa-category {
+        margin-top: 16px;
+        padding: 16px;
+        background-color: var(--input-bg);
+        border-radius: var(--radius);
+        border: 1px solid var(--border-color);
+      }
+      .qa-category h4 { margin: 0 0 12px 0; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); }
+      .qa-criterion { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); }
+      .qa-criterion:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+      .qa-criterion p { margin: 0 0 8px 0; font-weight: 500; }
+      .qa-criterion-inputs { display: flex; flex-wrap: wrap; gap: 12px; }
+      .qa-criterion-inputs select { flex: 1; min-width: 150px; background-color: var(--card-bg); }
+      .qa-criterion-inputs textarea { flex: 2; min-width: 200px; height: 50px; min-height: 50px; background-color: var(--card-bg); }
+      #coaching-overall-score {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--konecta-dark);
+        margin-top: 10px;
+      }
+      body.dark-mode #coaching-overall-score { color: var(--konecta-yellow); }
+      .coaching-list-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .coaching-list-header .export-btn { display: none; }
+      
+      /* --- Premium Modal Styles --- */
+      .modal-backdrop {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(17, 24, 39, 0.7); /* Dark bg */
+        backdrop-filter: blur(4px);
+        z-index: 199;
+      }
+      .modal {
+        display: none;
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 90%;
+        max-width: 600px; /* Default max width */
+        max-height: 90vh;
+        background-color: var(--card-bg);
+        border-radius: var(--radius);
+        z-index: 200;
+        box-shadow: var(--shadow-lg);
+        overflow: hidden;
+        flex-direction: column;
+      }
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 24px;
+        border-bottom: 1px solid var(--border-color);
+        background-color: var(--konecta-dark);
+      }
+      .modal-header h2 {
+        margin: 0;
+        font-size: 1.15rem;
+        color: white;
+      }
+      .modal-header .close-btn {
+        background: none;
+        border: none;
+        font-size: 1.75rem;
+        cursor: pointer;
+        color: #ffffff99;
+        padding: 0;
+        margin: 0;
+        line-height: 1;
+        min-width: auto;
+        box-shadow: none;
+      }
+      .modal-header .close-btn:hover {
+        color: white;
+        transform: none;
+      }
+      
+      .modal-body {
+        padding: 24px;
+        overflow-y: auto;
+        flex-grow: 1;
+      }
+      .modal-body p {
+        margin: 0 0 16px 0;
+        color: var(--text-color-secondary);
+      }
+      .modal-body .form-container {
+        padding: 0;
+        border: none;
+        box-shadow: none;
+      }
+
+      .modal-footer {
+        padding: 16px 24px;
+        border-top: 1px solid var(--border-color);
+        background-color: var(--input-bg);
+        text-align: right;
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+      }
+      .modal-footer button {
+        margin: 0;
+      }
+      .modal-footer .btn-secondary { /* Cancel button */
+        background-color: transparent;
+        color: var(--text-color-secondary);
+        border-color: var(--border-color);
+        box-shadow: var(--shadow-sm);
+      }
+      .modal-footer .btn-secondary:hover {
+        background-color: var(--input-bg);
+        color: var(--text-color);
+      }
+
+      /* Specific modal sizes */
+      #coaching-detail-modal { max-width: 800px; }
+      #confirm-modal { max-width: 450px; }
+
+      /* --- Responsive --- */
+      @media (max-width: 1024px) {
+        #app-sidebar {
+          width: 68px; /* Collapse sidebar */
+          padding: 16px 8px;
         }
-        // --- END NEW LOGIC ---
-
-        if (canView) {
-          results.push({
-            movementID: row[headers.indexOf("MovementID")],
-            userToMoveName: row[headers.indexOf("UserToMoveName")],
-            fromSupervisorName: userData.emailToName[row[headers.indexOf("FromSupervisorEmail")]] || "Unknown",
-            
-  toSupervisorName: userData.emailToName[row[headers.indexOf("ToSupervisorEmail")]] || "Unknown",
-            requestedDate: convertDateToString(new Date(row[headers.indexOf("RequestTimestamp")])),
-            requestedByName: userData.emailToName[row[headers.indexOf("RequestedByEmail")]] || "Unknown"
-          });
-}
-      }
-    }
-    return results;
-  } catch (e) {
-    Logger.log("webGetPendingMovements Error: " + e.message);
-    return { error: e.message };
-  }
-}
-
-function webApproveDenyMovement(movementID, newStatus) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore); // Use Core for updates
-    const userData = getUserDataFromDb(ss);
-    const moveSheet = getOrCreateSheet(ss, SHEET_NAMES.movementRequests);
-    const data = moveSheet.getDataRange().getValues();
-    
-    // Map Headers to find Columns
-    const headers = data[0];
-    const idIndex = headers.indexOf("MovementID");
-    const statusIndex = headers.indexOf("Status");
-    const toSupervisorIndex = headers.indexOf("ToSupervisorEmail");
-    const userToMoveIndex = headers.indexOf("UserToMoveEmail");
-    const actionTimeIndex = headers.indexOf("ActionTimestamp");
-    const actionByIndex = headers.indexOf("ActionByEmail");
-    // New Header might not exist in old sheets, so we use fixed index 10 (Column 11) or check
-    const toProjMgrIndex = 10; // 0-based index for Column K
-
-    let rowToUpdate = -1;
-    let requestDetails = {};
-
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][idIndex] === movementID) {
-        rowToUpdate = i + 1;
-        requestDetails = {
-          status: data[i][statusIndex],
-          toSupervisorEmail: (data[i][toSupervisorIndex] || "").toLowerCase(),
-          toProjectManagerEmail: (data[i][toProjMgrIndex] || "").toLowerCase(), // Read New PM
-          userToMoveEmail: (data[i][userToMoveIndex] || "").toLowerCase()
-        };
-        break;
-      }
-    }
-
-    if (rowToUpdate === -1) throw new Error("Movement request not found.");
-    if (requestDetails.status !== 'Pending') throw new Error(`Request is already ${requestDetails.status}.`);
-
-    // --- Security Check ---
-    // Approver must be the NEW Supervisor OR a Superadmin
-    // (Or the Admin of the new supervisor)
-    const adminRole = userData.emailToRole[adminEmail];
-    
-    // Get admin's hierarchy
-    const mySubordinateEmails = new Set(webGetAllSubordinateEmails(adminEmail));
-    const isReceivingSupervisor = (requestDetails.toSupervisorEmail === adminEmail);
-    const isSupervisorOfReceiver = mySubordinateEmails.has(requestDetails.toSupervisorEmail);
-
-    if (adminRole !== 'superadmin' && !isReceivingSupervisor && !isSupervisorOfReceiver) {
-      throw new Error("Permission denied. You can only approve requests assigned to you or your hierarchy.");
-    }
-
-    // Update Status
-    moveSheet.getRange(rowToUpdate, statusIndex + 1).setValue(newStatus);
-    moveSheet.getRange(rowToUpdate, actionTimeIndex + 1).setValue(new Date());
-    moveSheet.getRange(rowToUpdate, actionByIndex + 1).setValue(adminEmail);
-
-    if (newStatus === 'Approved') {
-      const userDBRow = userData.emailToRow[requestDetails.userToMoveEmail];
-      if (!userDBRow) throw new Error(`User ${requestDetails.userToMoveEmail} not found in DB.`);
-      
-      // Update Direct Manager (Col F = 6)
-      dbSheet.getRange(userDBRow, 6).setValue(requestDetails.toSupervisorEmail);
-      
-      // Update Project Manager (Col G = 7)
-      // Only if we have a valid new project manager
-      if (requestDetails.toProjectManagerEmail) {
-         dbSheet.getRange(userDBRow, 7).setValue(requestDetails.toProjectManagerEmail);
-      }
-
-      // Log
-      const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-      logsSheet.appendRow([
-        new Date(), 
-        userData.emailToName[requestDetails.userToMoveEmail], 
-        adminEmail, 
-        "Reporting Line Change Approved", 
-        `Direct: ${requestDetails.toSupervisorEmail}, Project: ${requestDetails.toProjectManagerEmail}`
-      ]);
-    }
-    
-    SpreadsheetApp.flush();
-    return { success: true, message: `Request ${newStatus}.` };
-
-  } catch (e) {
-    return { error: e.message };
-  }
-}
-
-/**
- * NEW: Fetches the movement history for a selected user.
- */
-function webGetMovementHistory(selectedUserEmail) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-    
-    // Security check: Is this admin allowed to see this user's history?
-    const adminRole = userData.emailToRole[adminEmail];
-    const mySubordinateEmails = new Set(webGetAllSubordinateEmails(adminEmail));
-
-    if (adminRole !== 'superadmin' && !mySubordinateEmails.has(selectedUserEmail)) {
-      throw new Error("Permission denied. You can only view the history of users in your reporting line.");
-    }
-    
-    const moveSheet = getOrCreateSheet(ss, SHEET_NAMES.movementRequests);
-    const data = moveSheet.getDataRange().getValues();
-    const headers = data[0];
-    const results = [];
-
-    // Find rows where the user was the one being moved
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      const userToMoveEmail = (row[headers.indexOf("UserToMoveEmail")] || "").toLowerCase();
-      
-      if (userToMoveEmail === selectedUserEmail) {
-        results.push({
-          status: row[headers.indexOf("Status")],
-          requestDate: convertDateToString(new Date(row[headers.indexOf("RequestTimestamp")])),
-          actionDate: convertDateToString(new Date(row[headers.indexOf("ActionTimestamp")])),
-          fromSupervisorName: userData.emailToName[row[headers.indexOf("FromSupervisorEmail")]] || "N/A",
-          toSupervisorName: userData.emailToName[row[headers.indexOf("ToSupervisorEmail")]] || "N/A",
-          actionByName: userData.emailToName[row[headers.indexOf("ActionByEmail")]] || "N/A",
-          requestedByName: userData.emailToName[row[headers.indexOf("RequestedByEmail")]] || "N/A"
-        });
-      }
-    }
-    
-    // Sort by request date, newest first
-    results.sort((a, b) => new Date(b.requestDate) - new Date(a.requestDate));
-    return results;
-
-  } catch (e) {
-    Logger.log("webGetMovementHistory Error: " + e.message);
-    return { error: e.message };
-  }
-}
-
-// ==========================================================
-// === NEW/REPLACED COACHING FUNCTIONS (START) ===
-// ==========================================================
-
-/**
- * (REPLACED)
- * Saves a new coaching session and its detailed scores.
- * Matches the new frontend form.
- */
-function webSubmitCoaching(sessionObject) {
-  try {
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-    const sessionSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingSessions);
-    const scoreSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingScores);
-    
-    const coachEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const coachName = userData.emailToName[coachEmail] || coachEmail;
-    
-    // Simple validation
-    if (!sessionObject.agentEmail || !sessionObject.sessionDate) {
-      throw new Error("Agent and Session Date are required.");
-    }
-
-    const agentName = userData.emailToName[sessionObject.agentEmail.toLowerCase()];
-    if (!agentName) {
-      throw new Error(`Could not find agent with email ${sessionObject.agentEmail}.`);
-    }
-
-    const sessionID = `CS-${new Date().getTime()}`; // Simple unique ID
-    const sessionDate = new Date(sessionObject.sessionDate + 'T00:00:00');
-    // *** NEW: Handle FollowUpDate ***
-    const followUpDate = sessionObject.followUpDate ? new Date(sessionObject.followUpDate + 'T00:00:00') : null;
-    const followUpStatus = followUpDate ? "Pending" : ""; // Set to pending if date exists
-
-    // 1. Log the main session
-    sessionSheet.appendRow([
-      sessionID,
-      sessionObject.agentEmail,
-      agentName,
-      coachEmail,
-      coachName,
-      sessionDate,
-      sessionObject.weekNumber,
-      sessionObject.overallScore,
-      sessionObject.followUpComment,
-      new Date(), // Timestamp of submission
-      followUpDate || "", // *** NEW: Add follow-up date ***
-      followUpStatus  // *** NEW: Add follow-up status ***
-    ]);
-
-    // 2. Log the individual scores
-    const scoresToLog = [];
-    if (sessionObject.scores && Array.isArray(sessionObject.scores)) {
-      sessionObject.scores.forEach(score => {
-        scoresToLog.push([
-          sessionID,
-          score.category,
-          score.criteria,
-          score.score,
-          score.comment
-        ]);
-      });
-    }
-
-    if (scoresToLog.length > 0) {
-      scoreSheet.getRange(scoreSheet.getLastRow() + 1, 1, scoresToLog.length, 5).setValues(scoresToLog);
-    }
-    
-    return `Coaching session for ${agentName} saved successfully.`;
-
-  } catch (err) {
-    Logger.log("webSubmitCoaching Error: " + err.message);
-    return "Error: " + err.message;
-  }
-}
-
-/**
- * (REPLACED)
- * Gets coaching history for the logged-in user or their team.
- * Reads from the new CoachingSessions sheet.
- */
-function webGetCoachingHistory(filter) { // filter is unused for now, but good practice
-  try {
-    const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-    const role = userData.emailToRole[userEmail] || 'agent';
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.coachingSessions);
-
-    // Get all data as objects
-    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-    const allData = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
-    
-    const allSessions = allData.map(row => {
-      let obj = {};
-      headers.forEach((header, index) => {
-        obj[header] = row[index];
-      });
-      return obj;
-    });
-
-    const results = [];
-    
-    // Get a list of users this person manages (if they are a manager)
-    let myTeamEmails = new Set();
-    if (role === 'admin' || role === 'superadmin') {
-      // Use the hierarchy-aware function
-      const myTeamList = webGetAllSubordinateEmails(userEmail);
-      myTeamList.forEach(email => myTeamEmails.add(email.toLowerCase()));
-    }
-
-    for (let i = allSessions.length - 1; i >= 0; i--) {
-      const session = allSessions[i];
-      if (!session || !session.AgentEmail) continue; // Skip empty/invalid rows
-
-      const agentEmail = session.AgentEmail.toLowerCase();
-
-      let canView = false;
-      
-      // *** MODIFIED LOGIC HERE ***
-      if (agentEmail === userEmail) {
-        // Anyone can see their own coaching
-        canView = true;
-      } else if (role === 'admin' && myTeamEmails.has(agentEmail)) {
-        // An admin can see their team's
-        canView = true;
-      } else if (role === 'superadmin') {
-        // Superadmin can see all (team members + their own, which is covered above)
-        canView = true;
-      }
-      // *** END MODIFIED LOGIC ***
-
-      if (canView) {
-        results.push({
-          sessionID: session.SessionID,
-          agentName: session.AgentName,
-          coachName: session.CoachName,
-          sessionDate: convertDateToString(new Date(session.SessionDate)),
-          weekNumber: session.WeekNumber,
-          overallScore: session.OverallScore,
-          followUpComment: session.FollowUpComment,
-          followUpDate: convertDateToString(new Date(session.FollowUpDate)),
-          followUpStatus: session.FollowUpStatus,
-          agentAcknowledgementTimestamp: convertDateToString(new Date(session.AgentAcknowledgementTimestamp))
-        });
-      }
-    }
-    return results;
-
-  } catch (err) {
-    Logger.log("webGetCoachingHistory Error: " + err.message);
-    return { error: err.message };
-  }
-}
-
-/**
- * NEW: Fetches the details for a single coaching session.
- * (MODIFIED: Renamed to webGetCoachingSessionDetails to be callable)
- * (MODIFIED 2: Added date-to-string conversion to fix null return)
- * (MODIFIED 3: Added AgentAcknowledgementTimestamp conversion)
- */
-function webGetCoachingSessionDetails(sessionID) {
-  try {
-    const ss = getSpreadsheet();
-    const sessionSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingSessions);
-    const scoreSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingScores);
-
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-
-    // 1. Get Session Summary
-    const sessionHeaders = sessionSheet.getRange(1, 1, 1, sessionSheet.getLastColumn()).getValues()[0];
-    const sessionData = sessionSheet.getDataRange().getValues();
-    let sessionSummary = null;
-
-    for (let i = 1; i < sessionData.length; i++) {
-      if (sessionData[i][0] === sessionID) {
-        sessionSummary = {};
-        sessionHeaders.forEach((header, index) => {
-          sessionSummary[header] = sessionData[i][index];
-        });
-        break;
-      }
-    }
-
-    if (!sessionSummary) {
-      throw new Error("Session not found.");
-    }
-
-    // 2. Get Session Scores
-    const scoreHeaders = scoreSheet.getRange(1, 1, 1, scoreSheet.getLastColumn()).getValues()[0];
-    const scoreData = scoreSheet.getDataRange().getValues();
-    const sessionScores = [];
-
-    for (let i = 1; i < scoreData.length; i++) {
-      if (scoreData[i][0] === sessionID) {
-        let scoreObj = {};
-        scoreHeaders.forEach((header, index) => {
-          scoreObj[header] = scoreData[i][index];
-        });
-        sessionScores.push(scoreObj);
-      }
-    }
-    
-    sessionSummary.CoachName = userData.emailToName[sessionSummary.CoachEmail] || sessionSummary.CoachName;
-    
-    // *** Convert Date objects to Strings before returning ***
-    sessionSummary.SessionDate = convertDateToString(new Date(sessionSummary.SessionDate));
-    sessionSummary.SubmissionTimestamp = convertDateToString(new Date(sessionSummary.SubmissionTimestamp));
-    sessionSummary.FollowUpDate = convertDateToString(new Date(sessionSummary.FollowUpDate));
-    // *** NEW: Convert the new column ***
-    sessionSummary.AgentAcknowledgementTimestamp = convertDateToString(new Date(sessionSummary.AgentAcknowledgementTimestamp));
-    // *** END NEW SECTION ***
-
-    return {
-      summary: sessionSummary,
-      scores: sessionScores
-    };
-
-  } catch (err) {
-    Logger.log("webGetCoachingSessionDetails Error: " + err.message);
-    return { error: err.message };
-  }
-}
-
-/**
- * NEW: Updates the follow-up status for a coaching session.
- */
-function webUpdateFollowUpStatus(sessionID, newStatus, newDateStr) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    
-    // Check permission
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-    const adminRole = userData.emailToRole[adminEmail] || 'agent';
-
-    if (adminRole !== 'admin' && adminRole !== 'superadmin') {
-      throw new Error("Permission denied. Only managers can update follow-up status.");
-    }
-    
-    const sessionSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingSessions);
-    const sessionData = sessionSheet.getDataRange().getValues();
-    const sessionHeaders = sessionData[0];
-    
-    // Find the column indexes
-    const statusColIndex = sessionHeaders.indexOf("FollowUpStatus");
-    const dateColIndex = sessionHeaders.indexOf("FollowUpDate");
-    
-    if (statusColIndex === -1 || dateColIndex === -1) {
-      throw new Error("Could not find 'FollowUpStatus' or 'FollowUpDate' columns in CoachingSessions sheet.");
-    }
-
-    // Find the row
-    let sessionRow = -1;
-    for (let i = 1; i < sessionData.length; i++) {
-      if (sessionData[i][0] === sessionID) {
-        sessionRow = i + 1; // 1-based index
-        break;
-      }
-    }
-
-    if (sessionRow === -1) {
-      throw new Error("Session not found.");
-    }
-
-    // Prepare new values
-    let newFollowUpDate = null;
-    if (newDateStr) {
-      newFollowUpDate = new Date(newDateStr + 'T00:00:00');
-    } else {
-      // If marking completed, use today's date
-      newFollowUpDate = new Date();
-    }
-    
-    // Update the sheet
-    sessionSheet.getRange(sessionRow, statusColIndex + 1).setValue(newStatus);
-    sessionSheet.getRange(sessionRow, dateColIndex + 1).setValue(newFollowUpDate);
-
-    SpreadsheetApp.flush(); // Ensure changes are saved
-
-    return { success: true, message: `Status updated to ${newStatus}.` };
-
-  } catch (err) {
-    Logger.log("webUpdateFollowUpStatus Error: " + err.message);
-    return { error: err.message };
-  }
-}
-
-/**
- * NEW: Allows an agent to acknowledge their coaching session.
- */
-function webSubmitCoachingAcknowledgement(sessionID) {
-  try {
-    const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const sessionSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingSessions);
-
-    // *** MODIFIED: Explicitly read headers ***
-    const sessionHeaders = sessionSheet.getRange(1, 1, 1, sessionSheet.getLastColumn()).getValues()[0];
-    // Get data rows separately, skipping header
-    const sessionData = sessionSheet.getRange(2, 1, sessionSheet.getLastRow() - 1, sessionSheet.getLastColumn()).getValues();
-
-    // Find the column indexes
-    const ackColIndex = sessionHeaders.indexOf("AgentAcknowledgementTimestamp");
-    const agentEmailColIndex = sessionHeaders.indexOf("AgentEmail");
-    if (ackColIndex === -1 || agentEmailColIndex === -1) {
-      throw new Error("Could not find 'AgentAcknowledgementTimestamp' or 'AgentEmail' columns in CoachingSessions sheet.");
-    }
-
-    // Find the row
-    let sessionRow = -1;
-    let agentEmailOnRow = null;
-    let currentAckStatus = null;
-
-    // *** MODIFIED: Loop starts at 0 and row index is i + 2 ***
-    for (let i = 0; i < sessionData.length; i++) {
-      if (sessionData[i][0] === sessionID) {
-        sessionRow = i + 2; // Data starts from row 2
-        agentEmailOnRow = sessionData[i][agentEmailColIndex].toLowerCase();
-        currentAckStatus = sessionData[i][ackColIndex];
-        break;
-      }
-    }
-
-    if (sessionRow === -1) {
-      throw new Error("Session not found.");
-    }
-    
-    // Security Check: Is this the correct agent?
-    if (agentEmailOnRow !== userEmail) {
-      throw new Error("Permission denied. You can only acknowledge your own coaching sessions.");
-    }
-    
-    // Check if already acknowledged
-    if (currentAckStatus) {
-      return { success: false, message: "This session has already been acknowledged." };
-    }
-    
-    // Update the sheet
-    sessionSheet.getRange(sessionRow, ackColIndex + 1).setValue(new Date());
-
-    SpreadsheetApp.flush(); // Ensure changes are saved
-
-    return { success: true, message: "Coaching session acknowledged successfully." };
-
-  } catch (err) {
-    Logger.log("webSubmitCoachingAcknowledgement Error: " + err.message);
-    return { error: err.message };
-  }
-}
-
-
-/**
- * NEW: Gets a list of unique, active template names.
- */
-function webGetActiveTemplates() {
-  try {
-    const ss = getSpreadsheet();
-    const templateSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingTemplates);
-    const data = templateSheet.getRange(2, 1, templateSheet.getLastRow() - 1, 4).getValues();
-    
-    const templateNames = new Set();
-    
-    data.forEach(row => {
-      const templateName = row[0];
-      const status = row[3];
-      if (templateName && status === 'Active') {
-        templateNames.add(templateName);
-      }
-    });
-    
-    return Array.from(templateNames).sort();
-    
-  } catch (err) {
-    Logger.log("webGetActiveTemplates Error: " + err.message);
-    return { error: err.message };
-  }
-}
-
-/**
- * NEW: Gets all criteria for a specific template name.
- */
-function webGetTemplateCriteria(templateName) {
-  try {
-    const ss = getSpreadsheet();
-    const templateSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingTemplates);
-    const data = templateSheet.getRange(2, 1, templateSheet.getLastRow() - 1, 4).getValues();
-    
-    const categories = {}; // Use an object to group criteria by category
-    
-    data.forEach(row => {
-      const name = row[0];
-      const category = row[1];
-      const criteria = row[2];
-      const status = row[3];
-      
-      if (name === templateName && status === 'Active' && category && criteria) {
-        if (!categories[category]) {
-          categories[category] = [];
+        #app-sidebar .nav-button-text {
+          display: none; /* Hide text */
         }
-        categories[category].push(criteria);
-      }
-    });
-    
-    // Convert from object to the array structure the frontend expects
-    const results = Object.keys(categories).map(categoryName => {
-      return {
-        category: categoryName,
-        criteria: categories[categoryName]
-      };
-    });
-    
-    return results;
-    
-  } catch (err) {
-    Logger.log("webGetTemplateCriteria Error: " + err.message);
-    return { error: err.message };
-  }
-}
-
-// ==========================================================
-// === NEW/REPLACED COACHING FUNCTIONS (END) ===
-// ==========================================================
-
-// [START] MODIFICATION 8: Add webSaveNewTemplate function
-/**
- * NEW: Saves a new coaching template from the admin tab.
- */
-function webSaveNewTemplate(templateName, categories) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    
-    // Check permission
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-    const adminRole = userData.emailToRole[adminEmail] || 'agent';
-
-    if (adminRole !== 'admin' && adminRole !== 'superadmin') {
-      throw new Error("Permission denied. Only managers can create templates.");
-    }
-    
-    // Validation
-    if (!templateName) {
-      throw new Error("Template Name is required.");
-    }
-    if (!categories || categories.length === 0) {
-      throw new Error("At least one category is required.");
-    }
-
-    const templateSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingTemplates);
-    
-    // Check if template name already exists
-    const templateNames = templateSheet.getRange(2, 1, templateSheet.getLastRow() - 1, 1).getValues();
-    const
-      lowerTemplateName = templateName.toLowerCase();
-    for (let i = 0; i < templateNames.length; i++) {
-      if (templateNames[i][0] && templateNames[i][0].toLowerCase() === lowerTemplateName) {
-        throw new Error(`A template with the name '${templateName}' already exists.`);
-      }
-    }
-
-    const rowsToAppend = [];
-    categories.forEach(category => {
-      if (category.criteria && category.criteria.length > 0) {
-        category.criteria.forEach(criterion => {
-          rowsToAppend.push([
-            templateName,
-            category.name,
-            criterion,
-            'Active' // Default to Active
-          ]);
-        });
-      }
-    });
-
-    if (rowsToAppend.length === 0) {
-      throw new Error("No criteria were found to save.");
-    }
-    
-    // Write all new rows at once
-    templateSheet.getRange(templateSheet.getLastRow() + 1, 1, rowsToAppend.length, 4).setValues(rowsToAppend);
-    
-    SpreadsheetApp.flush();
-    return `Template '${templateName}' saved successfully with ${rowsToAppend.length} criteria.`;
-
-  } catch (err) {
-    Logger.log("webSaveNewTemplate Error: " + err.message);
-    return "Error: " + err.message;
-  }
-}
-// [END] MODIFICATION 8
-
-// === NEW: Web App API for Manager Hierarchy ===
-function webGetManagerHierarchy() {
-  try {
-    const managerEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-    
-    const managerRole = userData.emailToRole[managerEmail] || 'agent';
-    if (managerRole === 'agent') {
-      return { error: "Permission denied. Only managers can view the hierarchy." };
-    }
-    
-    // --- Step 1: Build the direct reporting map (Supervisor -> [Subordinates]) ---
-    const reportsMap = {};
-    const userEmailMap = {}; // Map email -> {name, role}
-
-    userData.userList.forEach(user => {
-      userEmailMap[user.email] = { name: user.name, role: user.role };
-      const supervisorEmail = user.supervisor;
-      
-      if (supervisorEmail) {
-        if (!reportsMap[supervisorEmail]) {
-          reportsMap[supervisorEmail] = [];
+        #app-sidebar .nav-icon {
+          margin: 0; /* MODIFIED: Left-align icon */
         }
-        reportsMap[supervisorEmail].push(user.email);
-      }
-    });
-
-    // --- Step 2: Recursive function to build the tree (Hierarchy) ---
-    // MODIFIED: Added `visited` Set to track users in the current path.
-    function buildHierarchy(currentEmail, depth = 0, visited = new Set()) {
-      const user = userEmailMap[currentEmail];
-      
-      // If the email doesn't map to a user, it's likely a blank entry in the DB, so return null
-      if (!user) return null; 
-      
-      // CRITICAL CHECK: Detect circular reference
-      if (visited.has(currentEmail)) {
-        Logger.log(`Circular reference detected at user: ${currentEmail}`);
-        return {
-          email: currentEmail,
-          name: user.name,
-          role: user.role,
-          subordinates: [],
-          circularError: true
-        };
-      }
-      
-      // Add current user to visited set for this path
-      const newVisited = new Set(visited).add(currentEmail);
-
-
-      const subordinates = reportsMap[currentEmail] || [];
-      
-      // Separate managers/admins from agents
-      const adminSubordinates = subordinates
-        .filter(email => userData.emailToRole[email] === 'admin' || userData.emailToRole[email] === 'superadmin')
-        .map(email => buildHierarchy(email, depth + 1, newVisited))
-        .filter(s => s !== null); // Build sub-teams for managers
-
-      const agentSubordinates = subordinates
-        .filter(email => userData.emailToRole[email] === 'agent')
-        .map(email => ({
-          email: email,
-          name: userEmailMap[email].name,
-          role: userEmailMap[email].role,
-          subordinates: [] // Agents have no subordinates
-        }));
-        
-      // Combine and sort: Managers first, then Agents, then alphabetically
-      const combinedSubordinates = [...adminSubordinates, ...agentSubordinates];
-      
-      combinedSubordinates.sort((a, b) => {
-          // Sort by role (manager/admin first)
-          const aIsManager = a.role !== 'agent';
-          const bIsManager = b.role !== 'agent';
-          
-          if (aIsManager && !bIsManager) return -1;
-          if (!aIsManager && bIsManager) return 1;
-          
-          // Then sort by name
-          return a.name.localeCompare(b.name);
-      });
-
-
-      return {
-        email: currentEmail,
-        name: user.name,
-        role: user.role,
-        subordinates: combinedSubordinates,
-        depth: depth
-      };
-    }
-
-    // Start building the hierarchy from the manager's email
-    const hierarchy = buildHierarchy(managerEmail);
-    
-    // Check if the root node returned a circular error
-    if (hierarchy && hierarchy.circularError) {
-        throw new Error("Critical Error: Circular reporting line detected at the top level.");
-    }
-
-    return hierarchy;
-
-  } catch (err) {
-    Logger.log("webGetManagerHierarchy Error: " + err.message);
-    throw new Error(err.message);
-  }
-}
-
-// === NEW: Web App API to get all reports (flat list) ===
-function webGetAllSubordinateEmails(managerEmail) {
-    try {
-        const ss = getSpreadsheet();
-        const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-        const userData = getUserDataFromDb(dbSheet);
-        
-        const managerRole = userData.emailToRole[managerEmail] || 'agent';
-        if (managerRole === 'agent') {
-            throw new Error("Permission denied.");
+        #app-sidebar .nav-group-title {
+          text-align: center;
         }
-        
-        // --- Build the direct reporting map ---
-        const reportsMap = {};
-        userData.userList.forEach(user => {
-            const supervisorEmail = user.supervisor;
-            if (supervisorEmail) {
-                if (!reportsMap[supervisorEmail]) {
-                    reportsMap[supervisorEmail] = [];
-                }
-                reportsMap[supervisorEmail].push(user.email);
-            }
-        });
-        
-        const allSubordinates = new Set();
-        const queue = [managerEmail];
-        
-        // Use a set to track users we've already processed (including the manager him/herself)
-        const processed = new Set();
-        
-        while (queue.length > 0) {
-            const currentEmail = queue.shift();
-            
-            // Check for processing loop (shouldn't happen in BFS, but safe check)
-            if (processed.has(currentEmail)) continue;
-            processed.add(currentEmail);
-
-            const directReports = reportsMap[currentEmail] || [];
-            
-            directReports.forEach(reportEmail => {
-                if (!allSubordinates.has(reportEmail)) {
-                    allSubordinates.add(reportEmail);
-                    // If the report is a manager, add them to the queue to find their reports
-                    if (userData.emailToRole[reportEmail] !== 'agent') {
-                        queue.push(reportEmail); // <-- FIX: Was 'push(reportEmail)'
-                    }
-                }
-            
-        });
+        #app-sidebar .nav-group-title span {
+          display: none;
         }
-        
-        // Return all subordinates *plus* the manager
-        allSubordinates.add(managerEmail);
-        return Array.from(allSubordinates);
-
-    } catch (err) {
-        Logger.log("webGetAllSubordinateEmails Error: " + err.message);
-        return [];
-    }
-}
-// --- END OF WEB APP API SECTION ---
-
-
-function getUserInfo() { 
-  try {
-    const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const timeZone = Session.getScriptTimeZone(); 
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
-    let userData = getUserDataFromDb(ss);
-    let isNewUser = false; 
-    const KONECTA_DOMAIN = "@konecta.com"; 
-    
-    // FIX: Robust check to prevent duplicates on refresh
-    let userExists = userData.emailToName[userEmail] !== undefined;
-
-    if (!userExists && userEmail.endsWith(KONECTA_DOMAIN)) {
-      const emailColumn = dbSheet.getRange("C:C").getValues();
-      for (let i = 0; i < emailColumn.length; i++) {
-        if (String(emailColumn[i][0]).trim().toLowerCase() === userEmail) {
-          userExists = true;
-          break;
+        #app-sidebar .nav-group-title::before {
+          content: '• • •'; /* Show dots for section */
+          font-size: 1rem;
         }
+        .header-kap { display: none; }
       }
-    }
 
-    if (!userExists && userEmail.endsWith(KONECTA_DOMAIN)) {
-      isNewUser = true;
-      const nameParts = userEmail.split('@')[0].split('.');
-      const firstName = nameParts[0] ? nameParts[0].charAt(0).toUpperCase() + nameParts[0].slice(1) : '';
-      const lastName = nameParts[1] ? nameParts[1].charAt(0).toUpperCase() + nameParts[1].slice(1) : '';
-      const newName = [firstName, lastName].join(' ').trim();
-      const newEmpID = "KOM-PENDING-" + new Date().getTime();
-      dbSheet.appendRow([newEmpID, newName || userEmail, userEmail, 'agent', 'Pending', "", "", 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "Pending"]);
-      SpreadsheetApp.flush(); 
-      userData = getUserDataFromDb(ss);
-    }
-    
-    const accountStatus = userData.emailToAccountStatus[userEmail] || 'Pending';
-    const userName = userData.emailToName[userEmail] || "";
-    const role = userData.emailToRole[userEmail] || 'agent';
-    
-    let currentStatus = null;
-    if (accountStatus === 'Active') {
-      const now = new Date();
-      const shiftDate = getShiftDate(now, SHIFT_CUTOFF_HOUR);
-      const formattedDate = Utilities.formatDate(shiftDate, timeZone, "MM/dd/yyyy");
-      currentStatus = getLatestPunchStatus(userEmail, userName, shiftDate, formattedDate);
-    }
-
-    let allUsers = [];
-    let allAdmins = [];
-    if (role !== 'agent' || isNewUser || accountStatus === 'Pending') { 
-      allUsers = userData.userList;
-    }
-    // FIX: Add 'project_manager' to the list of admins/managers
-    allAdmins = userData.userList.filter(u => u.role === 'admin' || u.role === 'superadmin' || u.role === 'manager' || u.role === 'project_manager');
-    
-    const myBalances = userData.emailToBalances[userEmail] || { annual: 0, sick: 0, casual: 0 };
-    let hasPendingRoleRequests = false;
-    if (role === 'superadmin') {
-      const reqSheet = getOrCreateSheet(ss, SHEET_NAMES.roleRequests);
-      const data = reqSheet.getDataRange().getValues();
-      for (let i = 1; i < data.length; i++) { if (data[i][7] === 'Pending') { hasPendingRoleRequests = true; break; } }
-    }
-
-    const rbacMap = getPermissionsMap(ss);
-    const myPermissions = [];
-    for (const [perm, roles] of Object.entries(rbacMap)) {
-      if (roles[role]) myPermissions.push(perm);
-    }
-
-    const breakRules = {
-      break1: getBreakConfig("First Break").default,
-      lunch: getBreakConfig("Lunch").default,
-      break2: getBreakConfig("Last Break").default,
-      otPre: getBreakConfig("Overtime Pre-Shift").default,
-      otPost: getBreakConfig("Overtime Post-Shift").default
-    };
-
-    return {
-      name: userName, 
-      email: userEmail,
-      role: role,
-      allUsers: allUsers,
-      allAdmins: allAdmins,
-      myBalances: myBalances,
-      isNewUser: isNewUser, 
-      accountStatus: accountStatus, 
-      hasPendingRoleRequests: hasPendingRoleRequests, 
-      currentStatus: currentStatus,
-      permissions: myPermissions,
-      breakRules: breakRules 
-    };
-  } catch (e) { throw new Error("Failed in getUserInfo: " + e.message); }
-}
-
-
-// ================= PUNCH MAIN FUNCTION (ROBUST WFM LOGIC) =================
-function punch(action, targetUserName, puncherEmail, adminTimestamp) { 
-  const ss = getSpreadsheet();
-  const adherenceSheet = getOrCreateSheet(ss, SHEET_NAMES.adherence);
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-  const otherCodesSheet = getOrCreateSheet(ss, SHEET_NAMES.otherCodes);
-  const timeZone = Session.getScriptTimeZone(); 
-
-  const userData = getUserDataFromDb(dbSheet);
-  const puncherRole = userData.emailToRole[puncherEmail] || 'agent';
-  const puncherIsAdmin = (puncherRole === 'admin' || puncherRole === 'superadmin');
-  
-  const userName = targetUserName; 
-  const userEmail = userData.nameToEmail[userName];
-
-  // 1. Validation: User Existence & Permission
-  if (!puncherIsAdmin && puncherEmail !== userEmail) { 
-    throw new Error("Permission denied. You can only submit punches for yourself.");
-  }
-  if (!userEmail) throw new Error(`User "${userName}" not found in Data Base.`);
-
-  // 2. Setup Time & Date Context
-  const nowTimestamp = adminTimestamp ? new Date(adminTimestamp) : new Date();
-  const shiftDate = getShiftDate(new Date(nowTimestamp), SHIFT_CUTOFF_HOUR);
-  const formattedDate = Utilities.formatDate(shiftDate, timeZone, "MM/dd/yyyy");
-
-  // 3. Get Current State (Critical for Logic)
-  const row = findOrCreateRow(adherenceSheet, userName, shiftDate, formattedDate);
-  // Fetch current state from Column Y (25) - LastAction
-  const lastAction = adherenceSheet.getRange(row, 25).getValue() || "Logged Out"; 
-  
-  // 4. LOGIC ENGINE
-  
-  // --- A. LOGIN LOGIC ---
-  if (action === "Login") {
-    // Check 1: Already Logged In?
-    const existingLogin = adherenceSheet.getRange(row, 3).getValue();
-    if (existingLogin) throw new Error("You have already logged in today. Duplicate login is not allowed.");
-
-    // Check 2: 4-Hour Schedule Lock (Admins bypass this)
-    if (!puncherIsAdmin) {
-       validateScheduleLock(userEmail, nowTimestamp);
-    }
-
-    // Execution
-    adherenceSheet.getRange(row, 3).setValue(nowTimestamp); // Login Time
-    adherenceSheet.getRange(row, 14).setValue("Present");   // Leave Type
-    updateState(adherenceSheet, row, "Login", nowTimestamp);
-    logsSheet.appendRow([new Date(), userName, userEmail, action, nowTimestamp]);
-    return `Welcome ${userName}. You are successfully Logged In.`;
-  }
-
-  // --- B. PRE-REQUISITE CHECK (Must be logged in to do anything else) ---
-  const loginTime = adherenceSheet.getRange(row, 3).getValue();
-  if (!loginTime) throw new Error("You must punch 'Login' before performing any other action.");
-  
-  // --- C. LOGOUT LOGIC ---
-  if (action === "Logout") {
-    // Check: Must be in "Login" state (Working) to logout. Cannot logout from Break/AUX.
-    if (lastAction !== "Login" && !lastAction.endsWith("Out")) {
-       // Allow logout if last action was an "Out" (e.g. Lunch Out -> Logout), or just Login.
-       // But if last action was "In" (e.g. Lunch In), block it.
-       if (lastAction.endsWith("In") && lastAction !== "Login") {
-         throw new Error(`You are currently status: "${lastAction}". You must end that activity before Logging Out.`);
-       }
-    }
-    
-    // Check: Already logged out?
-    const existingLogout = adherenceSheet.getRange(row, 10).getValue();
-    if (existingLogout) throw new Error("You have already logged out today.");
-
-    // Execution
-    adherenceSheet.getRange(row, 10).setValue(nowTimestamp);
-    updateState(adherenceSheet, row, "Logout", nowTimestamp);
-    
-    // Calculate final metrics
-    calculateEndShiftMetrics(adherenceSheet, row, userEmail, nowTimestamp);
-    
-    logsSheet.appendRow([new Date(), userName, userEmail, action, nowTimestamp]);
-    return `Goodbye ${userName}. Shift ended.`;
-  }
-
-  // --- D. HANDLING AUX CODES (Meeting, Personal, Coaching, System Down) ---
-  if (action.includes("Meeting") || action.includes("Personal") || action.includes("Coaching") || action.includes("System Down")) {
-      return processAuxCode(otherCodesSheet, adherenceSheet, row, userName, userEmail, action, nowTimestamp, lastAction, puncherIsAdmin ? puncherEmail : null);
-  }
-
-  // --- E. HANDLING MAIN BREAKS (1st Break, Lunch, Last Break) ---
-  const breakCols = { 
-    "First Break In": 4, "First Break Out": 5, 
-    "Lunch In": 6, "Lunch Out": 7, 
-    "Last Break In": 8, "Last Break Out": 9 
-  };
-  
-  if (breakCols[action]) {
-      const colIndex = breakCols[action];
-      const isBreakIn = action.endsWith("In");
-      const currentVal = adherenceSheet.getRange(row, colIndex).getValue();
-
-      // Rule: Once per day check
-      if (currentVal) throw new Error(`Error: "${action}" has already been used today.`);
-
-      if (isBreakIn) {
-          // Rule: To go on Break, you must be working (Login or returned from previous break)
-          // You cannot go Break In if you are currently on Coaching In or Lunch In
-          if (lastAction.endsWith("In") && lastAction !== "Login") {
-             throw new Error(`Cannot switch to ${action} while you are currently "${lastAction}". Finish that first.`);
-          }
-          
-          // Execution
-          adherenceSheet.getRange(row, colIndex).setValue(nowTimestamp);
-          updateState(adherenceSheet, row, action, nowTimestamp);
-          
-          // Check Schedule Window (Compliance)
-          checkBreakWindowCompliance(adherenceSheet, row, userEmail, action, nowTimestamp);
-          
-          return `${action} recorded. Enjoy your break.`;
-
-      } else {
-          // Rule: To go Break Out, you MUST be in that specific Break In state
-          const expectedIn = action.replace(" Out", " In");
-          if (lastAction !== expectedIn) {
-             throw new Error(`Invalid Action. You are not currently in "${expectedIn}". Current status: ${lastAction}`);
-          }
-
-          // Execution
-          adherenceSheet.getRange(row, colIndex).setValue(nowTimestamp);
-          updateState(adherenceSheet, row, action, nowTimestamp); // State becomes "First Break Out" (effectively working)
-          
-          // Calculate Duration Logic
-          const inTime = adherenceSheet.getRange(row, colIndex - 1).getValue();
-          if (inTime) {
-             const duration = timeDiffInSeconds(inTime, nowTimestamp);
-             // Log logic for exceed is handled in daily calc or here
-             const typeBase = action.replace(" Out", ""); // "First Break"
-             const allowed = getBreakConfig(typeBase).default;
-             const diff = duration - allowed;
-             // Map exceed columns: 1st=17, Lunch=18, Last=19
-             const exceedCol = (action === "First Break Out") ? 17 : (action === "Lunch Out") ? 18 : 19;
-             adherenceSheet.getRange(row, exceedCol).setValue(diff > 0 ? diff : 0);
-          }
-          
-          return `${action} recorded. Welcome back.`;
-      }
-  }
-
-  throw new Error("Unknown punch action.");
-}
-
-// --- HELPER: Process AUX Codes (Reusable & Multi-use) ---
-// --- HELPER: Process AUX Codes (Fixed for Multi-word codes like "System Down") ---
-function processAuxCode(auxSheet, mainSheet, mainRow, userName, userEmail, action, now, lastAction, adminEmail) {
-    // FIX: Handle codes with spaces (e.g., "System Down In")
-    let type = action.endsWith(" In") ? "In" : (action.endsWith(" Out") ? "Out" : "");
-    if (!type) throw new Error("Invalid AUX action format.");
-    
-    // Extract code name by removing the " In" or " Out" suffix
-    let codeName = action.substring(0, action.lastIndexOf(" " + type));
-    
-    if (type === "In") {
-        // Validation: Cannot go AUX In if already in another In state (except Login)
-        // Note: We allow switching if we are just "Logged In" (working state)
-        if (lastAction.endsWith("In") && lastAction !== "Login") {
-            throw new Error(`Cannot start ${codeName} while currently status: "${lastAction}". End current activity first.`);
+      @media (max-width: 768px) {
+        /* On mobile, sidebar goes away, content is full screen */
+        .app-container {
+          flex-direction: column;
         }
-        
-        // Log to Other Codes Sheet
-        auxSheet.appendRow([now, userName, codeName, now, "", "", adminEmail || ""]);
-        
-        // Update Main State
-        updateState(mainSheet, mainRow, action, now);
-        
-        return `${action} started.`;
-    } 
-    else if (type === "Out") {
-        // Validation: Must be in the specific In state
-        const expectedIn = `${codeName} In`;
-        if (lastAction !== expectedIn) {
-            throw new Error(`Cannot punch ${action}. You are not currently in "${expectedIn}".`);
+        #app-sidebar {
+          width: 100%;
+          height: auto;
+          border-right: none;
+          border-bottom: 1px solid var(--border-color);
+          display: flex;
+          overflow-x: auto;
+          padding: 8px;
+        }
+        .nav-group {
+          display: flex;
+          margin-bottom: 0;
+        }
+        .nav-group-title { display: none; }
+        .tab-button {
+          flex-direction: column;
+          gap: 4px;
+          padding: 8px;
+          min-width: 80px;
+        }
+        #app-sidebar .nav-icon {
+          margin: 0 auto; /* MODIFIED: Re-center icon for mobile bottom-bar view */
+        }
+        .tab-button .nav-button-text {
+          display: block;
+          font-size: 0.75rem;
         }
 
-        // Find the open session in Other Codes sheet to close it
-        const data = auxSheet.getDataRange().getValues();
-        let foundRow = -1;
+        #app-content {
+          padding: 20px;
+        }
+        .content-container {
+          padding: 0; /* Remove old padding */
+        }
         
-        // Search backwards for the last "In" for this user and code that has no "Out"
-        for (let i = data.length - 1; i > 0; i--) {
-            // Col A=Date, B=Name, C=Code, D=In, E=Out
-            // We check if Code matches and "Out" (Col E/index 4) is empty
-            if (data[i][1] === userName && data[i][2] === codeName && data[i][3] && !data[i][4]) {
-                foundRow = i + 1;
-                break;
-            }
+        .form-row {
+          flex-direction: column;
+          gap: 16px;
         }
-
-        if (foundRow > 0) {
-            const inTime = data[foundRow-1][3]; // Date Obj
-            const duration = timeDiffInSeconds(inTime, now);
-            auxSheet.getRange(foundRow, 5).setValue(now); // Set Out Time
-            auxSheet.getRange(foundRow, 6).setValue(duration); // Set Duration
-            
-            updateState(mainSheet, mainRow, action, now);
-            return `${action} recorded. Duration: ${Math.round(duration/60)} mins.`;
-        } else {
-            // Fallback if data sync issue, just update state
-            updateState(mainSheet, mainRow, action, now);
-            return `${action} recorded (Warning: matching start time not found).`;
+        .request-list-item {
+            flex-direction: column;
+            align-items: stretch;
         }
-    }
-}
-
-// --- HELPER: Update State in Adherence Tracker ---
-function updateState(sheet, row, action, time) {
-    sheet.getRange(row, 25).setValue(action); // Col Y: LastAction
-    sheet.getRange(row, 26).setValue(time);   // Col Z: Timestamp
-}
-
-// --- HELPER: 4-Hour Lateness Lock ---
-function validateScheduleLock(userEmail, now) {
-    const schedule = getScheduleForDate(userEmail, now);
-    
-    // If no schedule exists, we usually allow login (or you can block it by throwing error here)
-    if (!schedule || !schedule.start) return; 
-
-    const schedStart = new Date(schedule.start);
-    const diffMs = now - schedStart;
-    const diffMinutes = diffMs / 60000;
-    const diffHours = diffMs / (1000 * 60 * 60);
-
-    // 1. Block Early Login (> 15 mins before start)
-    // If Pre-Shift OT is approved, 'schedStart' is already moved earlier, so this adapts automatically.
-    if (diffMinutes < -15) {
-         const timeString = Utilities.formatDate(schedStart, Session.getScriptTimeZone(), "HH:mm");
-         throw new Error(`Login Blocked: Too early. You can only log in 15 minutes before your shift start (${timeString}).`);
-    }
-
-    // 2. Block Late Login (> 4 hours after start)
-    if (diffHours > 4) {
-        throw new Error(`Login Blocked: You are ${diffHours.toFixed(1)} hours late. The cutoff is 4 hours.`);
-    }
-}
-
-// --- HELPER: End Shift Metrics (Overtime/Early Leave) ---
-function calculateEndShiftMetrics(sheet, row, userEmail, now) {
-    const schedule = getScheduleForDate(userEmail, now);
-    if (!schedule || !schedule.end) return;
-
-    const schedEnd = new Date(schedule.end);
-    const diffSec = (now - schedEnd) / 1000; // Positive = Overtime, Negative = Early
-
-    if (diffSec > 0) {
-        // Overtime Logic
-        const threshold = getBreakConfig("Overtime Post-Shift").default || 300; // 5 mins
-        if (diffSec > threshold) {
-            sheet.getRange(row, 12).setValue(diffSec); // Overtime Col
-        } else {
-            sheet.getRange(row, 12).setValue(0);
+        .request-list-item .item-actions {
+            text-align: left;
+            margin-top: 10px;
         }
-        sheet.getRange(row, 13).setValue(0); // Early Leave is 0
-    } else {
-        // Early Leave Logic
-        sheet.getRange(row, 12).setValue(0); // Overtime is 0
-        sheet.getRange(row, 13).setValue(Math.abs(diffSec)); // Early Leave Col
-    }
-    
-    // Calculate Net Hours
-    // (Logic extracted to reuse)
-    // ... trigger net calc ...
-}
-
-function checkBreakWindowCompliance(sheet, row, userEmail, action, now) {
-    // Fetches schedule, checks if now is within break windows, updates Col V (BreakWindowViolation)
-    // Existing logic in previous punch function was fine, just ensure it's called here.
-    const scheduleData = getScheduleForDate(userEmail, now);
-    // ... implementation ...
-}
-
-
-// REPLACE this function
-// ================= SCHEDULE RANGE SUBMIT FUNCTION =================
-function submitScheduleRange(puncherEmail, userEmail, userName, startDateStr, endDateStr, startTime, endTime, leaveType) {
-  const ss = getSpreadsheet();
-const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const userData = getUserDataFromDb(dbSheet);
-  const puncherRole = userData.emailToRole[puncherEmail] || 'agent';
-  const timeZone = Session.getScriptTimeZone();
-if (puncherRole !== 'admin' && puncherRole !== 'superadmin') {
-    throw new Error("Permission denied. Only admins can submit schedules.");
-}
-  
-  const scheduleSheet = getOrCreateSheet(ss, SHEET_NAMES.schedule);
-  const scheduleData = scheduleSheet.getDataRange().getValues();
-  const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-const userScheduleMap = {};
-  for (let i = 1; i < scheduleData.length; i++) {
-    // *** MODIFIED: Read Email from Col G (index 6) ***
-    const rowEmail = scheduleData[i][6];
-// *** MODIFIED: Read Date from Col B (index 1) ***
-    const rowDateRaw = scheduleData[i][1];
-if (rowEmail && rowDateRaw && rowEmail.toLowerCase() === userEmail) {
-      const rowDate = new Date(rowDateRaw);
-const rowDateStr = Utilities.formatDate(rowDate, timeZone, "MM/dd/yyyy");
-      userScheduleMap[rowDateStr] = i + 1;
-}
-  }
-  
-  const startDate = new Date(startDateStr);
-  const endDate = new Date(endDateStr);
-let currentDate = new Date(startDate);
-  let daysProcessed = 0;
-  let daysUpdated = 0;
-  let daysCreated = 0;
-const oneDayInMs = 24 * 60 * 60 * 1000;
-  
-  currentDate = new Date(currentDate.valueOf() + currentDate.getTimezoneOffset() * 60000);
-const finalDate = new Date(endDate.valueOf() + endDate.getTimezoneOffset() * 60000);
-  
-  while (currentDate <= finalDate) {
-    const currentDateStr = Utilities.formatDate(currentDate, timeZone, "MM/dd/yyyy");
-// *** NEW: Auto-calculate shift end date for overnight shifts ***
-    let shiftEndDate = new Date(currentDate);
-// Start with the same date
-    if (startTime && endTime) {
-      const startDateTime = createDateTime(currentDate, startTime);
-const endDateTime = createDateTime(currentDate, endTime);
-      if (endDateTime <= startDateTime) {
-        shiftEndDate.setDate(shiftEndDate.getDate() + 1);
-// It's the next day
+        .dashboard-detail-item {
+           grid-template-columns: 1fr 1fr;
+        }
+        .dashboard-detail-item .detail-value {
+           grid-column: span 1;
+           text-align: left;
+        }
+        .qa-criterion-inputs {
+          flex-direction: column;
+        }
+        .coaching-list-header {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 15px;
+        }
       }
-    }
-    // *** END NEW ***
+      
+      /* --- Footer --- */
+      footer {
+        text-align: center;
+        padding: 20px;
+        background-color: var(--page-bg);
+        color: var(--text-color-secondary);
+        border-top: 1px solid var(--border-color);
+        font-size: 0.8rem;
+      }
+      footer p {
+        margin: 0;
+      }
+      /* --- New Searchable Multi-Select Styles --- */
+.multi-select-wrapper {
+  position: relative;
+  width: 100%;
+  font-family: var(--font-sans);
+}
 
-    const result = updateOrAddSingleSchedule(
-      scheduleSheet, userScheduleMap, logsSheet,
-      userEmail, userName, 
-      currentDate, // This is StartDate (Col B)
-      shiftEndDate, // *** NEW: This is EndDate (Col D) ***
-      currentDateStr, 
-      startTime, endTime, leaveType, puncherEmail
+.multi-select-trigger {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  min-height: 42px;
+}
+
+.multi-select-trigger:hover {
+  border-color: var(--konecta-blue);
+}
+
+.selected-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  overflow: hidden;
+  max-height: 60px;
+}
+
+.select-tag {
+  background-color: var(--konecta-blue);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.select-tag .remove-tag {
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.multi-select-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+  display: none; /* Hidden by default */
+  margin-top: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.multi-select-dropdown.open {
+  display: block;
+}
+
+.dropdown-search-container {
+  padding: 8px;
+  border-bottom: 1px solid var(--border-color);
+  position: sticky;
+  top: 0;
+  background-color: var(--card-bg);
+  z-index: 1001;
+}
+
+.dropdown-search-input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 0.9rem;
+  background-color: var(--input-bg);
+  color: var(--text-color);
+}
+
+.dropdown-options-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.dropdown-option {
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.dropdown-option:hover {
+  background-color: var(--input-bg);
+}
+
+.dropdown-option.selected {
+  background-color: #eff6ff; /* Light Blue */
+}
+body.dark-mode .dropdown-option.selected {
+  background-color: #1e3a8a;
+}
+
+.dropdown-option input[type="checkbox"] {
+  pointer-events: none; /* Let the row click handle it */
+}
+
+.dropdown-actions {
+  padding: 8px;
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.8rem;
+}
+
+.dropdown-action-btn {
+  background: none;
+  border: none;
+  color: var(--konecta-blue);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* --- Phase 7: Command Center Styles --- */
+      #command-center-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+      .metric-card {
+        background-color: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius);
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        box-shadow: var(--shadow-sm);
+        transition: transform 0.2s;
+      }
+      .metric-card:hover { transform: translateY(-2px); }
+      .metric-title { font-size: 0.85rem; color: var(--text-color-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+      .metric-value { font-size: 2rem; font-weight: 700; color: var(--text-color); margin: 8px 0; }
+      .metric-sub { font-size: 0.8rem; color: var(--text-color-secondary); }
+      
+      /* Color coding for metrics */
+      .metric-good { color: #16a34a; } /* Green */
+      .metric-warn { color: #ca8a04; } /* Yellow */
+      .metric-bad { color: #dc2626; }  /* Red */
+
+.status-offline { background-color: #e5e7eb; color: #374151; }
+body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
+
+.read-only-field { background-color: #f3f4f6 !important; color: #6b7280 !important; cursor: not-allowed; }
+.profile-subview { animation: fadeIn 0.3s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+      
+    #mobile-blocker {
+        display: none; /* Hidden by default */
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background-color: var(--page-bg);
+        z-index: 2147483647; /* Max z-index */
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 40px;
+      }
+
+      /* 1. Standard CSS Check (for normal mobile view)
+         2. JS-Enforced Class (for "Desktop Site" bypassers)
+      */
+      @media (max-width: 768px) {
+        body .app-container, body header, body footer, body #app-loader, body .modal-backdrop, body .modal { display: none !important; }
+        body #mobile-blocker { display: flex !important; }
+        body { overflow: hidden !important; }
+      }
+
+      /* Force block if JS detects mobile device regardless of screen width */
+      body.force-mobile-block .app-container, 
+      body.force-mobile-block header, 
+      body.force-mobile-block footer, 
+      body.force-mobile-block #app-loader,
+      body.force-mobile-block .modal-backdrop,
+      body.force-mobile-block .modal { 
+        display: none !important; 
+      }
+      
+      body.force-mobile-block #mobile-blocker { 
+        display: flex !important; 
+      }
+      
+      body.force-mobile-block { 
+        overflow: hidden !important; 
+      }
+      /* [END] NEW: Mobile Restriction Styles */
+
+      /* Heatmap Styles */
+.heatmap-row {
+    margin-bottom: 15px;
+    background: var(--card-bg);
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+}
+.heatmap-header {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+}
+.timeline-track {
+    position: relative;
+    height: 30px;
+    background-color: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+    width: 100%;
+}
+.timeline-bar {
+    position: absolute;
+    height: 100%;
+    top: 0;
+    font-size: 0.7rem;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    white-space: nowrap;
+}
+/* Colors */
+.bar-Work { background-color: #10b981; z-index: 1; }
+.bar-Break { background-color: #f59e0b; z-index: 2; }
+.bar-Lunch { background-color: #f59e0b; z-index: 2; }
+.bar-Aux { background-color: #3b82f6; z-index: 2; }
+
+
+/* --- NEW TIMELINE GRID STYLES --- */
+.timeline-container {
+    position: relative;
+    width: 100%;
+    overflow-x: auto;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding-bottom: 10px;
+}
+
+/* The Time Scale Header (00:00 - 23:00) */
+.timeline-scale {
+    display: flex;
+    height: 30px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--input-bg);
+    min-width: 800px; /* Force scroll on small screens */
+    position: relative;
+}
+.scale-hour {
+    flex: 1; /* Distribute evenly */
+    border-right: 1px solid #e5e7eb;
+    font-size: 0.7rem;
+    color: var(--text-color-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: left;
+    padding-left: 4px;
+}
+/* 30-min Grid Lines Background */
+.timeline-grid-bg {
+    position: absolute;
+    top: 0; left: 0; bottom: 0; right: 0;
+    display: flex;
+    z-index: 0;
+    pointer-events: none;
+}
+.grid-col {
+    flex: 1;
+    border-right: 1px dashed #f3f4f6; /* Subtle 30min line */
+}
+.grid-col:nth-child(even) {
+    border-right: 1px solid #e5e7eb; /* Stronger Hour line */
+}
+
+/* Agent Row */
+.timeline-agent-row {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    min-width: 800px;
+}
+.timeline-agent-info {
+    width: 180px;
+    padding: 10px;
+    border-right: 1px solid var(--border-color);
+    background: var(--card-bg);
+    flex-shrink: 0;
+    position: sticky;
+    left: 0;
+    z-index: 10;
+    box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+}
+.timeline-track-area {
+    flex-grow: 1;
+    position: relative;
+    height: 50px;
+    background: transparent;
+}
+
+/* Bars */
+.t-bar {
+    position: absolute;
+    top: 10px;
+    height: 30px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    z-index: 2;
+    cursor: default;
+}
+.t-bar:hover { z-index: 5; transform: scaleY(1.1); }
+
+/* Status Colors */
+.t-work { background: #10b981; }
+.t-break { background: #f59e0b; }
+.t-lunch { background: #d97706; }
+.t-aux { background: #3b82f6; }
+.t-sched { 
+    background: repeating-linear-gradient(
+      45deg,
+      #e5e7eb,
+      #e5e7eb 10px,
+      #f3f4f6 10px,
+      #f3f4f6 20px
     );
-if (result === "UPDATED") daysUpdated++;
-    if (result === "CREATED") daysCreated++;
+    opacity: 0.6;
+    z-index: 1;
+    color: #666;
+    border: 1px dashed #9ca3af;
+}
+
+/* Adherence Flags */
+.t-flag {
+    position: absolute;
+    top: -5px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    z-index: 6;
+    cursor: help;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+.flag-late { background: #dc2626; } /* Red */
+.flag-early { background: #dc2626; }
+.flag-window { background: #7c3aed; } /* Purple */
+.flag-noshow { background: #000; } /* Black */
+
+/* Tooltip on hover */
+.t-flag:hover::after {
+    content: attr(data-msg);
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #333;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    z-index: 10;
+}
+
+
+
+    </style>
+  </head>
+  
+  <!-- 
+  ==================================================================
+  == NEW: KOMPASS PRO HTML BODY
+  == This body has a new layout:
+  == 1. <header> (Sticky Topbar)
+  == 2. <div class="app-container">
+  ==    - <nav id="app-sidebar"> (Vertical Navigation)
+  ==    - <main id="app-content"> (Main Content Area)
+  == 3. Modals (Remain at the end)
+  ==================================================================
+  -->
+  <body>
     
-    daysProcessed++;
-    currentDate.setTime(currentDate.getTime() + oneDayInMs);
-}
-  
-  if (daysProcessed === 0) {
-    throw new Error("No dates were processed. Check date range.");
-}
-  
-  return `Schedule submission complete for ${userName}. Days processed: ${daysProcessed} (Updated: ${daysUpdated}, Created: ${daysCreated}).`;
-}
+    <div id="mobile-blocker">
+      <div class="logo-container" style="margin-bottom: 24px; width: 180px; height: 60px; background: #fff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+          <img class="header-logo" src="https://image2url.com/images/1762976595272-13dc7db5-88f2-48e6-bffb-39d4830812e5.png" alt="Konecta Logo">
+      </div>
+      <h2 style="font-size: 1.5rem; color: var(--text-color); margin-bottom: 12px;">Konecta PC Access Required</h2>
+      <p style="color: var(--text-color-secondary); font-size: 1rem; max-width: 320px; line-height: 1.5;">
+        KOMPASS is optimized for workstation use. <br>Please access this tool from a Konecta laptop or desktop computer.
+      </p>
+    </div>
+    
 
-// Helper for Import & Manual Submit (PHASE 9 UPDATED)
-function updateOrAddSingleSchedule(
-  scheduleSheet, userScheduleMap, logsSheet, 
-  userEmail, userName, shiftStartDate, shiftEndDate, targetDateStr, 
-  startTime, endTime, leaveType, puncherEmail,
-  // New Optional Args
-  b1s = "", b1e = "", ls = "", le = "", b2s = "", b2e = ""
-) {
-  
-  const existingRow = userScheduleMap[targetDateStr];
-  let startTimeObj = startTime ? new Date(`1899-12-30T${startTime}`) : "";
-  let endTimeObj = endTime ? new Date(`1899-12-30T${endTime}`) : "";
-  let endDateObj = (leaveType === 'Present' && endTimeObj) ? shiftEndDate : "";
+    <!-- App Loader -->
+    <div id="app-loader">
+      <div class="spinner"></div>
+    </div>
 
-  // Convert break strings to Date objects if they exist
-  const toDateObj = (t) => t ? new Date(`1899-12-30T${t}`) : "";
-  
-  // --- PHASE 9: Write 13 Columns ---
-  const rowData = [[
-    userName,       // A
-    shiftStartDate, // B
-    startTimeObj,   // C
-    endDateObj,     // D
-    endTimeObj,     // E
-    leaveType,      // F
-    userEmail,      // G
-    toDateObj(b1s), // H (Break1 Start)
-    toDateObj(b1e), // I (Break1 End)
-    toDateObj(ls),  // J (Lunch Start)
-    toDateObj(le),  // K (Lunch End)
-    toDateObj(b2s), // L (Break2 Start)
-    toDateObj(b2e)  // M (Break2 End)
-  ]];
+    <!-- Main Header -->
+    <header>
+      <div class="header-brand">
+        <div class="logo-container">
+          <img class="header-logo" src="https://image2url.com/images/1762976595272-13dc7db5-88f2-48e6-bffb-39d4830812e5.png" alt="Konecta Logo">
+        </div>
+        <h1>KOMPASS <span class="header-kap">Konecta Operations, Management & Personnel Self-Service</span></h1>
+      </div>
 
-  if (existingRow) {
-    scheduleSheet.getRange(existingRow, 1, 1, 13).setValues(rowData);
-    logsSheet.appendRow([new Date(), userName, puncherEmail, "Schedule UPDATE", `Set to: ${leaveType}`]);
-    return "UPDATED";
-  } else {
-    scheduleSheet.appendRow(rowData[0]);
-    logsSheet.appendRow([new Date(), userName, puncherEmail, "Schedule CREATE", `Set to: ${leaveType}`]);
-    return "CREATED";
-  }
-}
-
-// ================= HELPER FUNCTIONS =================
-
-function getShiftDate(dateObj, cutoffHour) {
-  if (dateObj.getHours() < cutoffHour) {
-    dateObj.setDate(dateObj.getDate() - 1);
-  }
-  return dateObj;
-}
-
-function createDateTime(dateObj, timeStr) {
-  if (!timeStr) return null;
-  const parts = timeStr.split(':');
-  if (parts.length < 2) return null;
-  
-  const [hours, minutes, seconds] = parts.map(Number);
-  if (isNaN(hours) || isNaN(minutes)) return null; 
-
-  const newDate = new Date(dateObj);
-  newDate.setHours(hours, minutes, seconds || 0, 0);
-  return newDate;
-}
-
-// [code.gs] REPLACE your existing getUserDataFromDb with this:
-
-function getUserDataFromDb(ss) {
-  if (!ss || !ss.getSheetByName) ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const coreSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII); 
-
-  const coreData = coreSheet.getDataRange().getValues();
-  const piiData = piiSheet.getDataRange().getValues();
-  const piiMap = {};
-  for (let i = 1; i < piiData.length; i++) {
-    const empID = piiData[i][0];
-    piiMap[empID] = { hiringDate: piiData[i][1] };
-  }
-
-  const nameToEmail = {};
-  const emailToName = {};
-  const emailToRole = {};
-  const emailToBalances = {};
-  const emailToRow = {};
-  const emailToSupervisor = {};
-  const emailToProjectManager = {}; 
-  const emailToAccountStatus = {};
-  const emailToHiringDate = {};
-  const userList = [];
-
-  // Map Headers Dynamically
-  const headers = coreData[0];
-  const colIdx = {};
-  headers.forEach((header, index) => { colIdx[header] = index; });
-
-  const defaultDirectMgrIdx = 5; // Fallback to Col F (Index 5) if headers fail
-
-  for (let i = 1; i < coreData.length; i++) {
-    try {
-      const row = coreData[i];
-      const empID = row[colIdx["EmployeeID"] || 0];
-      const name = row[colIdx["Name"] || 1];
-      const email = row[colIdx["Email"] || 2];
-
-      if (name && email) {
-        const cleanName = name.toString().trim();
-        const cleanEmail = email.toString().trim().toLowerCase();
-        const userRole = (row[colIdx["Role"] || 3] || 'agent').toString().trim().toLowerCase();
-        const accountStatus = (row[colIdx["AccountStatus"] || 4] || "Pending").toString().trim();
-
-        // --- MANAGER FETCHING (FIXED) ---
-        let dmIdx = colIdx["DirectManagerEmail"];
-        if (dmIdx === undefined) dmIdx = colIdx["DirectManager"]; 
-        if (dmIdx === undefined) dmIdx = defaultDirectMgrIdx;
-
-        // FIX: Check for "FunctionalManagerEmail" (Col G) explicitly
-        let pmIdx = colIdx["ProjectManagerEmail"];
-        if (pmIdx === undefined) pmIdx = colIdx["ProjectManager"];
-        if (pmIdx === undefined) pmIdx = colIdx["FunctionalManagerEmail"]; 
-
-        let dotIdx = colIdx["DottedManager"];
-
-        const directMgr = (row[dmIdx] || "").toString().trim().toLowerCase();
-        // If pmIdx is still undefined, projectMgr will be empty string
-        const projectMgr = (pmIdx !== undefined ? row[pmIdx] : "").toString().trim().toLowerCase();
-        const dottedMgr = (dotIdx !== undefined ? row[dotIdx] : "").toString().trim().toLowerCase();
-        // ---------------------------------------------
-
-        const pii = piiMap[empID] || {};
-        const hiringDateStr = convertDateToString(parseDate(pii.hiringDate));
-
-        nameToEmail[cleanName] = cleanEmail;
-        emailToName[cleanEmail] = cleanName;
-        emailToRole[cleanEmail] = userRole;
-        emailToRow[cleanEmail] = i + 1;
+      <div class="header-controls">
+        <div class="dark-mode-toggle-wrapper" title="Toggle Dark Mode">
+            <input type="checkbox" id="dark-mode-toggle">
+            <label for="dark-mode-toggle" class="switch-label">
+                <span class="sun-icon">☀️</span>
+                <span class="moon-icon">🌙</span>
+            </label>
+        </div>
         
-        emailToSupervisor[cleanEmail] = directMgr;
-        emailToProjectManager[cleanEmail] = projectMgr;
-        emailToAccountStatus[cleanEmail] = accountStatus;
-        emailToHiringDate[cleanEmail] = hiringDateStr;
+        <button id="header-refresh-button" title="Refresh Data" onclick="refreshCurrentData()">
+          <!-- Inline SVG Icon -->
+          <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+        </button>
 
-        emailToBalances[cleanEmail] = {
-          annual: parseFloat(row[colIdx["AnnualBalance"] || 7]) || 0,
-          sick: parseFloat(row[colIdx["SickBalance"] || 8]) || 0,
-          casual: parseFloat(row[colIdx["CasualBalance"] || 9]) || 0
-        };
-
-        userList.push({
-          empID: empID,
-          name: cleanName,
-          email: cleanEmail,
-          role: userRole,
-          balances: emailToBalances[cleanEmail],
-          supervisor: directMgr,
-          projectManager: projectMgr, // This will now populate correctly
-          dottedManager: dottedMgr,
-          accountStatus: accountStatus,
-          hiringDate: hiringDateStr
-        });
-      }
-    } catch (e) {
-      Logger.log(`Error processing user row ${i}: ${e.message}`);
-    }
-  }
-
-  return {
-    nameToEmail, emailToName, emailToRole, emailToBalances,
-    emailToRow, emailToSupervisor, emailToProjectManager,
-    emailToAccountStatus, emailToHiringDate, userList
-  };
-}
-
-
-/**
- * UPDATED PHASE 2: Returns Status + Login Time for Timers
- */
-function getLatestPunchStatus(userEmail, userName, shiftDate, formattedDate) {
-  const ss = getSpreadsheet();
-  const adherenceSheet = getOrCreateSheet(ss, SHEET_NAMES.adherence);
-  
-  // Find the row
-  const adherenceData = adherenceSheet.getDataRange().getValues();
-  let rowData = null;
-  
-  // Find row matching today
-  for (let i = adherenceData.length - 1; i > 0; i--) {
-    const rowDate = adherenceData[i][0];
-    let rowDateStr = (rowDate instanceof Date) ? 
-        Utilities.formatDate(rowDate, Session.getScriptTimeZone(), "MM/dd/yyyy") : "";
+        <button id="header-role-request-button" title="Request Role Upgrade" onclick="showRoleRequestModal()">
+          <!-- Inline SVG Icon -->
+          <svg id="role-request-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
+        </button>
+      </div>
+    </header>
     
-    if (rowDateStr === formattedDate && adherenceData[i][1] === userName) {
-      rowData = adherenceData[i];
-      break;
-    }
-  }
+    <!-- New Main App Layout Container -->
+    <div class="app-container">
+    
+      <!-- New Vertical Sidebar Navigation -->
+      <nav id="app-sidebar">
+        
+        <div class="nav-group">
+          <div class="nav-group-title" title="Agent Tools"><span>Agent Tools</span></div>
+          <button id="profile-tab-button" class="tab-button" onclick="showTab('profile')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+            <span class="nav-button-text">My Profile</span>
+          </button>
+          <button id="punch-tab-button" class="tab-button active" onclick="showTab('punch')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <span class="nav-button-text">Punch Clock</span>
+          </button>
+          
+          <button id="my-schedule-tab-button" class="tab-button" onclick="showTab('my-schedule')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+            <span class="nav-button-text">My Schedule</span>
+          </button>
+          <button id="leave-request-tab-button" class="tab-button" onclick="showTab('leave-request')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 2v4"></path><path d="M16 2v4"></path><rect x="3" y="4" width="18" height="18" rx="2"></rect><path d="M3 10h18"></path><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path><path d="M16 18h.01"></path></svg>
+            <span class="nav-button-text">My Leave</span>
+          </button>
+          <button id="history-report-tab-button" class="tab-button" onclick="showTab('history-report')">
+             <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></svg>
+            <span class="nav-button-text">History Report</span>
+          </button>
+          <!-- MODIFIED: Coaching tab moved here -->
+          <button id="coaching-tab-button" class="tab-button" onclick="showTab('coaching')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            <span class="nav-button-text">Coaching</span>
+          </button>
+          <button id="performance-tab-button" class="tab-button" onclick="showTab('performance')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+            <span class="nav-button-text">Performance</span>
+          </button>
 
-  const scheduleInfo = getScheduleForDate(userEmail, shiftDate);
+          <button id="offboarding-tab-button" class="tab-button" onclick="showTab('offboarding')">
+            <span class="nav-icon">🚩</span>
+            <span class="nav-button-text">Offboarding</span>
+          </button>
 
-  if (!rowData) {
-    return { status: "Logged Out", time: null, loginTime: null, schedule: scheduleInfo };
-  }
+          <button id="overtime-tab-button" class="tab-button" onclick="showTab('overtime')">
+            <span class="nav-icon">⏱</span>
+            <span class="nav-button-text">Overtime</span>
+          </button>
 
-  // Col C (index 2) is Login Time
-  const loginTime = rowData[2] ? new Date(rowData[2]) : null;
-  
-  // Col Y (index 24) is LastAction, Col Z (index 25) is Timestamp
-  // These were populated by our new updateState() helper
-  const lastAction = rowData[24];
-  const lastActionTime = rowData[25] ? new Date(rowData[25]) : null;
+        </div>
+        
+        <div class="nav-group">
+          <div class="nav-group-title" title="Management"><span>Management</span></div>
+          <button id="dashboard-tab-button" class="tab-button" onclick="showTab('dashboard')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
+            <span class="nav-button-text">Dashboard</span>
+          </button>
+          <button id="leave-approval-tab-button" class="tab-button" onclick="showTab('leave-approval')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 9c0 .6-.4 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v5Z"></path><path d="M18 15c0 .6-.4 1-1 1h-3a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v3Z"></path><path d="M21 12v7a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-7"></path><path d="m10 10 3 3 3-3"></path></svg>
+            <span class="nav-button-text">Approvals</span>
+          </button>
+          <button id="reporting-line-tab-button" class="tab-button" onclick="showTab('reporting-line')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><polyline points="17 11 19 13 23 9"></polyline></svg>
+            <span class="nav-button-text">Reporting Line</span>
+          </button>
+        
+          <!-- MODIFIED: Coaching tab removed from here -->
+        </div>
 
-  // Determine Display Status
-  let displayStatus = "Logged Out";
-  
-  if (lastAction === "Login" || (lastAction && lastAction.endsWith("Out") && lastAction !== "Logout")) {
-      displayStatus = "Logged In";
-  } else if (lastAction === "Logout") {
-      displayStatus = "Logged Out";
-  } else if (lastAction) {
-      // "Meeting In", "First Break In", "Coaching In"
-      displayStatus = lastAction; // Pass raw "In" status
-  }
+        <div class="nav-group">
+          <div class="nav-group-title" title="Admin"><span>Admin</span></div>
 
-  return {
-    status: displayStatus,
-    time: convertDateToString(lastActionTime),
-    loginTime: convertDateToString(loginTime),
-    schedule: scheduleInfo
-  };
-}
+          <button id="finance-admin-tab-button" class="tab-button" onclick="showTab('finance-admin')">
+            <span class="nav-icon">💰</span>
+            <span class="nav-button-text">Finance Admin</span>
+          </button>
 
-/**
- * UPDATED PHASE 1: Helper to fetch schedule start/end for a specific date.
- * Handles overnight shifts logic correctly.
- */
-function getScheduleForDate(userEmail, dateObj) {
-  const ss = getSpreadsheet();
-  const sheet = getOrCreateSheet(ss, SHEET_NAMES.schedule);
-  const data = sheet.getDataRange().getValues();
-  const timeZone = Session.getScriptTimeZone();
-  const targetDateStr = Utilities.formatDate(dateObj, timeZone, "MM/dd/yyyy");
-  
-  // Iterate backwards to find the most recent matching schedule entry
-  for (let i = data.length - 1; i > 0; i--) {
-    // Col 7 (Index 6) is email, Col 2 (Index 1) is Date
-    if (String(data[i][6]).toLowerCase() === userEmail.toLowerCase()) {
-      const rowDate = data[i][1];
+          <button id="analytics-tab-button" class="tab-button" onclick="showTab('analytics')">
+  <span class="nav-icon">📊</span>
+  <span class="nav-button-text">Analytics</span>
+</button>
+          <button id="schedule-tab-button" class="tab-button" onclick="showTab('schedule')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M19 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path><path d="M12 12h-4v4h4v-4z"></path><path d="M16 2v4"></path><path d="M8 2v4"></path><path d="M3 10h18"></path></svg>
+            <span class="nav-button-text">Schedule Editor</span>
+          </button>
+          <button id="project-admin-tab-button" class="tab-button" onclick="showTab('project-admin')">
+           <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+           <span class="nav-button-text">Project Admin</span>
+         </button>
+          <button id="admin-tools-tab-button" class="tab-button" onclick="showTab('admin-tools')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>
+            <span class="nav-button-text">Admin Tools</span>
+          </button>
+          <button id="coaching-admin-tab-button" class="tab-button" onclick="showTab('coaching-admin')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20.94c1.5 0 2.85-.83 3.53-2.06"></path><path d="M12 3.06c-1.5 0-2.85.83-3.53 2.06"></path><path d="M18.94 12c0 1.5-.83 2.85-2.06 3.53"></path><path d="M5.06 12c0-1.5.83-2.85 2.06-3.53"></path><circle cx="12" cy="12" r="1"></circle><path d="M19 12a7 7 0 1 0-14 0 7 7 0 0 0 14 0z"></path></svg>
+            <span class="nav-button-text">Coaching Admin</span>
+          </button>
+          <button id="registration-admin-tab-button" class="tab-button" onclick="showTab('registration-admin')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="17" y1="11" x2="23" y2="11"></line></svg>
+            <span class="nav-button-text">Registrations</span>
+          </button>
+          <button id="announcements-admin-tab-button" class="tab-button" onclick="showTab('announcements-admin')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M19 12H5"></path><path d="M12 19l-7-7 7-7"></path></svg>
+            <span class="nav-button-text">Announcements</span>
+          </button>
+          <button id="recruitment-tab-button" class="tab-button" onclick="showTab('recruitment')">
+            <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            <span class="nav-button-text">Recruitment</span>
+          </button>
+          <button id="hr-admin-tab-button" class="tab-button" onclick="showTab('hr-admin')">
+            <span class="nav-icon">👥</span>
+            <span class="nav-button-text">HR Admin</span>
+          </button>
+        </div>
+
+      </nav>
       
-      // Check if this row matches our target date
-      // Note: parseDate is robust, but direct comparison of strings is safer for exact dates
-      let rowDateStr = "";
-      if (rowDate instanceof Date) {
-        rowDateStr = Utilities.formatDate(rowDate, timeZone, "MM/dd/yyyy");
-      } else {
-        // Try parsing if string
-        const pDate = parseDate(rowDate);
-        if (pDate) rowDateStr = Utilities.formatDate(pDate, timeZone, "MM/dd/yyyy");
-      }
-
-      if (rowDateStr === targetDateStr) {
-        let startTime = data[i][2]; // Col C
-        let endTime = data[i][4];   // Col E
+      <!-- Main Content Area -->
+      <!-- All tab panels are moved inside here -->
+      <main id="app-content">
         
-        // Construct full DateTime objects
-        let startDateTime = null;
-        let endDateTime = null;
+        <!-- ================================== -->
+        <!--      TAB 1: PUNCH PANEL            -->
+        <!-- ================================== -->
+        <div id="punch-panel" class="tab-panel">
 
-        if (startTime) {
-           // Handle if time is already a Date object (from Sheets) or string
-           const timeStr = (startTime instanceof Date) ? 
-             Utilities.formatDate(startTime, timeZone, "HH:mm:ss") : startTime;
-           startDateTime = createDateTime(dateObj, timeStr);
-        }
+  <div id="announcement-banner-container" style="display: none; margin-bottom: 20px;">
+    <div id="announcement-banner" class="status-message warning" style="visibility: visible; opacity: 1; text-align: left; padding-right: 35px; position: relative;">
+      <strong style="display: block; margin-bottom: 5px;">Announcements</strong>
+      <div id="announcement-content-area"></div>
+      <button onclick="dismissAnnouncements()" style="position: absolute; top: 10px; right: 10px; background: none; border: none; font-size: 1.5rem; color: var(--status-pending-text); cursor: pointer; padding: 0; margin: 0; line-height: 1;">&times;</button>
+    </div>
+  </div>
 
-        if (endTime) {
-           const timeStr = (endTime instanceof Date) ? 
-             Utilities.formatDate(endTime, timeZone, "HH:mm:ss") : endTime;
-           
-           // Base end date is the same day
-           let baseEndDate = new Date(dateObj);
-           endDateTime = createDateTime(baseEndDate, timeStr);
-           
-           // Overnight check: If End Time is earlier than Start Time, it ends the next day
-           // Or if explicit EndDate (Col D) is different (not handled here for simplicity, relying on time logic)
-           if (startDateTime && endDateTime && endDateTime < startDateTime) {
-             endDateTime.setDate(endDateTime.getDate() + 1);
-           }
-        }
-
-        return {
-          start: convertDateToString(startDateTime),
-          end: convertDateToString(endDateTime)
-        };
-      }
-    }
-  }
-  return null;
-}
-
-/**
- * NEW PHASE 3: Reads break configuration from the sheet.
- * Returns an object with default and max duration in seconds.
- */
-function getBreakConfig(breakType, projectId) {
-  const ss = getSpreadsheet();
-  const sheet = getOrCreateSheet(ss, SHEET_NAMES.breakConfig);
-  const data = sheet.getDataRange().getValues();
+  <div id="agent-info" class="info-card">Loading user info...</div> 
   
-  // Default fallbacks if sheet is empty or row missing
-  let config = { default: 900, max: 1200 }; // 15 min / 20 min default
-  if (breakType === "Lunch") config = { default: 1800, max: 2400 }; // 30 min / 40 min
+  <div id="admin-panel" class="info-card" style="display: none; text-align: left; overflow: visible;">
+    <div id="agent-select-container"></div>
+  </div>
+
+  <div id="project-selector-container" class="info-card" style="text-align: left; margin-bottom: 20px; background-color: var(--input-bg);">
+    <label for="current-project-select" style="font-weight: 500; margin-right: 10px;">Select Project:</label>
+    <select id="current-project-select" style="max-width: 300px; padding: 8px;">
+      <option value="">-- Loading Projects... --</option>
+    </select>
+  </div>
+
+  <div id="timers-grid" style="display:none; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+    
+    <div style="background: var(--card-bg); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); box-shadow: var(--shadow-sm); display: flex; align-items: center; gap: 12px;">
+      <div style="background: var(--konecta-blue); color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">⏱️</div>
+      <div>
+        <div style="font-size: 0.75rem; color: var(--text-color-secondary); text-transform: uppercase; font-weight: 600;">Total Shift Time</div>
+        <div id="shift-timer-value" style="font-size: 1.5rem; font-weight: 700; color: var(--text-color); font-variant-numeric: tabular-nums;">00:00:00</div>
+        <div style="font-size: 0.75rem; color: var(--text-color-secondary);">Login: <span id="shift-start-time">--:--</span></div>
+      </div>
+    </div>
+
+    <div style="background: var(--card-bg); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); box-shadow: var(--shadow-sm); display: flex; align-items: center; gap: 12px;">
+      <div id="status-icon-bg" style="background: #10b981; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">⚡</div>
+      <div>
+        <div id="status-timer-label" style="font-size: 0.75rem; color: var(--text-color-secondary); text-transform: uppercase; font-weight: 600;">Current Activity</div>
+        <div id="status-timer-value" style="font-size: 1.5rem; font-weight: 700; color: var(--text-color); font-variant-numeric: tabular-nums;">00:00:00</div>
+        <div id="status-current-name" style="font-size: 0.85rem; font-weight: 500; color: var(--konecta-dark);">Logged Out</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div id="current-status-display" class="status-message" style="visibility: hidden; text-align: center; margin-top: 0; margin-bottom: 20px;"></div>
   
-  for (let i = 1; i < data.length; i++) {
-    // Col A: Type, Col B: Default, Col C: Max, Col D: Project
-    const rowType = data[i][0];
-    const rowProject = data[i][3] || "ALL";
+  <div id="status" class="status-message"></div>
+  
+  <div id="buttons">
+    <div class="button-group"><button class="btn-primary" onclick="punch('Login')">Login</button></div>
+    <div class="button-group">
+      <button class="btn-primary" onclick="punch('First Break In')">1st Break In</button>
+      <button class="btn-primary" onclick="punch('First Break Out')">1st Break Out</button>
+    </div>
+    <div class="button-group">
+      <button class="btn-primary" onclick="punch('Lunch In')">Lunch In</button>
+      <button class="btn-primary" onclick="punch('Lunch Out')">Lunch Out</button>
+    </div>
+    <div class="button-group">
+      <button class="btn-primary" onclick="punch('Last Break In')">Last Break In</button>
+      <button class="btn-primary" onclick="punch('Last Break Out')">Last Break Out</button>
+    </div>
+    <div class="button-group">
+      <button class="btn-primary" onclick="punch('Logout')">Logout</button>
+    </div>
+  </div>
+
+  <div id="other-buttons">
+     <div class="button-group">
+       <button onclick="punch('Coaching In')">Coaching In</button>
+       <button onclick="punch('Coaching Out')">Coaching Out</button>
+     </div>
+    <div class="button-group">
+      <button onclick="punch('Meeting In')">Meeting In</button>
+      <button onclick="punch('Meeting Out')">Meeting Out</button>
+    </div>
+     <div class="button-group">
+       <button onclick="punch('Personal In')">Personal In</button>
+       <button onclick="punch('Personal Out')">Personal Out</button>
+     </div>
+     <div class="button-group">
+       <button onclick="punch('System Down In')" style="color: #dc2626; border-color: #dc2626;">System Down In</button>
+       <button onclick="punch('System Down Out')" style="color: #dc2626; border-color: #dc2626;">System Down Out</button>
+     </div>
+  </div>
+</div>
+
+        <!-- ================================== -->
+        <!--      TAB 2: MY SCHEDULE PANEL      -->
+        <!-- ================================== -->
+        <div id="my-schedule-panel" class="tab-panel">
+          <h2 id="my-schedule-title">My Upcoming Schedule</h2>
+          <p class="text-color-secondary">Your schedule for the next 7 days.</p>
+          <div id="my-schedule-status" class="status-message"></div>
+          <div id="my-schedule-display">
+            <!-- JS will populate this -->
+          </div>
+        </div>
+
+
+        <!-- ================================== -->
+        <!--      TAB 2.1: MY PROFILE PANEL      -->
+        <!-- ================================== -->
+
+        <div id="profile-panel" class="tab-panel">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+    <h2>My Employee Profile</h2>
+    <span id="prof-status-badge" class="status-tag">Active</span>
+  </div>
+  
+  <div class="button-group" style="justify-content: flex-start; gap: 10px; border-bottom: none; padding-bottom: 0;">
+    <button class="btn-secondary active" id="btn-prof-general" onclick="switchProfileSubTab('general')">General</button>
+    <button class="btn-secondary" id="btn-prof-contract" onclick="switchProfileSubTab('contract')">Contract & Job</button>
+    <button class="btn-secondary" id="btn-prof-personal" onclick="switchProfileSubTab('personal')">Personal & PII</button>
+    <button class="btn-secondary" id="btn-prof-docs" onclick="switchProfileSubTab('docs')">Documents</button>
+    <button class="btn-secondary" id="btn-prof-finance" onclick="switchProfileSubTab('finance')">Financials</button>
+  </div>
+  <hr class="section-divider" style="margin: 10px 0 20px 0;">
+
+  <div id="prof-view-general" class="profile-subview">
+    <form id="prof-form-general" class="form-container">
+      <div class="form-row">
+        <div class="form-group"><label>Full Name</label><input type="text" id="prof-name" readonly class="read-only-field"></div>
+        <div class="form-group"><label>Employee ID</label><input type="text" id="prof-id" readonly class="read-only-field"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Konecta Email</label><input type="text" id="prof-email" readonly class="read-only-field"></div>
+        <div class="form-group"><label>Personal Email</label><input type="text" id="prof-personal-email"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Phone Number</label><input type="text" id="prof-phone"></div>
+        <div class="form-group"><label>Home Address</label><input type="text" id="prof-address"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Emergency Contact</label><input type="text" id="prof-emergency"></div>
+        <div class="form-group"><label>Relationship</label><input type="text" id="prof-relation"></div>
+      </div>
+      <div style="text-align:right; margin-top:15px;">
+        <button type="button" class="btn-primary" onclick="saveProfile()">Save Changes</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="prof-view-contract" class="profile-subview" style="display:none;">
+    <div class="form-container">
+      <h3 style="margin-top:0; color:var(--konecta-blue);">Job Details</h3>
+      <div class="form-row">
+        <div class="form-group"><label>Title</label><input type="text" id="prof-title" readonly class="read-only-field"></div>
+        <div class="form-group"><label>Department</label><input type="text" id="prof-dept" readonly class="read-only-field"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Direct Manager</label><input type="text" id="prof-direct-mgr" readonly class="read-only-field"></div>
+        <div class="form-group"><label>Project Manager</label><input type="text" id="prof-proj-mgr" readonly class="read-only-field"></div>
+      </div>
+      
+      <hr class="section-divider">
+      
+      <h3 style="margin-top:0; color:var(--konecta-blue);">Contract Info</h3>
+      <div class="form-row">
+        <div class="form-group"><label>Hiring Date</label><input type="text" id="prof-hiring" readonly class="read-only-field"></div>
+        <div class="form-group"><label>Contract Type</label><input type="text" id="prof-contract-type" readonly class="read-only-field"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Salary (Confidential)</label><input type="text" id="prof-salary" readonly class="read-only-field"></div>
+        <div class="form-group"><label>IBAN</label><input type="text" id="prof-iban" placeholder="Request change via HR"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="prof-view-personal" class="profile-subview" style="display:none;">
+    <div class="form-container">
+      <div class="form-row">
+        <div class="form-group"><label>National ID</label><input type="text" id="prof-nat-id" readonly class="read-only-field"></div>
+        <div class="form-group"><label>Social Insurance</label><input type="text" id="prof-social" readonly class="read-only-field"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Birth Date</label><input type="text" id="prof-dob" readonly class="read-only-field"></div>
+        <div class="form-group"><label>Age</label><input type="text" id="prof-age" readonly class="read-only-field" style="width:80px;"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Marital Status</label><input type="text" id="prof-marital" readonly class="read-only-field"></div>
+        <div class="form-group"><label>Dependents</label><input type="text" id="prof-dependents" readonly class="read-only-field"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="prof-view-docs" class="profile-subview" style="display:none;">
+    <div id="doc-list-container" class="request-list">
+      <p class="text-color-secondary">Loading documents...</p>
+    </div>
+  </div>
+  <div id="prof-view-finance" class="profile-subview" style="display:none;">
+  <div class="form-container">
+    <h3 style="margin-top:0; color:var(--konecta-blue);">Compensation Structure</h3>
+    <div class="leave-balances" style="grid-template-columns: repeat(3, 1fr); gap:15px; display:grid; margin-bottom:20px;">
+        <div class="balance-item"><p>Basic Salary</p><span class="balance-days" id="fin-basic">--</span></div>
+        <div class="balance-item"><p>Variable Pay</p><span class="balance-days" id="fin-variable">--</span></div>
+        <div class="balance-item"><p>Total Gross</p><span class="balance-days" id="fin-total">--</span></div>
+    </div>
+    <hr class="section-divider">
+    <h3>Upcoming Entitlements & Payouts</h3>
+    <div id="my-entitlements-list" class="request-list">
+        <p class="text-color-secondary">Loading financial data...</p>
+    </div>
+  </div>
+</div>
+
+  <div id="profile-status" class="status-message"></div>
+</div>
+
+        <!-- ================================== -->
+        <!--     TAB 3: MY LEAVE PANEL          -->
+        <!-- ================================== -->
+        <div id="leave-request-panel" class="tab-panel">
+          <h2>My Balances</h2>
+          <div id="leave-balances">
+            <div class="balance-item"><p>Annual</p><span class="balance-days" id="balance-annual">--</span></div>
+            <div class="balance-item"><p>Sick</p><span class="balance-days" id="balance-sick">--</span></div>
+            <div class="balance-item"><p>Casual</p><span class="balance-days" id="balance-casual">--</span></div>
+          </div>
+
+          <form id="leave-form" class="form-container">
+            <h2>Submit Leave Request</h2>
+            <div class="form-group"><label for="leave-type">Leave Type</label>
+            <select id="leave-type" onchange="toggleSickNoteField()"><option value="Annual">Annual</option><option value="Sick">Sick</option><option value="Casual">Casual</option></select></div>
+            <div class="form-row">
+              <div class="form-group"><label for="leave-start-date">Start Date</label><input type="date" id="leave-start-date" required></div>
+              <div class="form-group"><label for="leave-end-date">End Date</label><input type="date" id="leave-end-date"><small>Leave blank for a single-day request.</small></div>
+            </div>
+            <div class="form-group"><label for="leave-reason">Reason (Optional)</label><textarea id="leave-reason" rows="3"></textarea></div>
+            <div id="sick-note-upload-group" class="form-group" style="display: none;">
+              <label for="sick-note-file">Upload Sick Note (PDF Required)</label>
+              <input type="file" id="sick-note-file" class="form-group" accept=".pdf" style="border: none; padding: 0;">
+              <small>This is mandatory for all 'Sick' leave requests.</small>
+            </div>
+            
+            <button type="button" class="btn-primary" onclick="submitLeaveRequest()">Submit Request</button>
+          </form>
+          <div id="leave-status" class="status-message"></div>
+          
+          <div class="request-list">
+            <h2 style="margin: 0;">My Request History</h2>
+            <div id="my-requests-list" class="request-list" style="margin-top: 16px;">
+              <!-- JS will populate this -->
+            </div>
+          </div>
+        </div>
+        
+        <!-- ================================== -->
+        <!--    TAB 4: HISTORY REPORT PANEL     -->
+        <!-- ================================== -->
+        <div id="history-report-panel" class="tab-panel">
+          <h2>Adherence History Report</h2>
+          <form id="history-report-form" class="form-container" style="background-color: var(--input-bg);">
+            <div class="form-group" id="history-user-select-container" style="display: none;">
+  <label>Select User(s)</label>
+  <div id="history-user-select-wrapper"></div>
+</div>
+            <div class="form-group">
+              <label for="history-start-date">Start Date</label>
+              <input type="date" id="history-start-date" required>
+            </div>
+            <div class="form-group">
+              <label for="history-end-date">End Date</label>
+              <input type="date" id="history-end-date" required>
+            </div>
+            <button type="button" class="btn-primary" onclick="loadHistoryReport()">View History</button>
+            <button type="button" class="export-btn" id="export-csv-btn" onclick="exportHistoryToCSV()">Export to CSV</button>
+          </form>
+          
+          <div id="my-history-status" class="status-message"></div>
+          <div id="history-report-display">
+             <p class
+="text-color-secondary" style="margin-top: 20px; text-align: center;">Select users and dates, then click "View History" to generate the report.</p>
+          </div>
+        </div>
+
+        <!-- ================================== -->
+        <!--    TAB 5: SCHEDULE EDITOR PANEL    -->
+        <!-- ================================== -->
+        <div id="schedule-panel" class="tab-panel">
+          
+          <form id="csv-import-form" class="form-container">
+            <h2>Bulk Schedule Importer (CSV)</h2>
+            <p class="text-color-secondary" style="font-size: 0.9rem;">
+              Upload a CSV with headers: <code>Name</code>, <code>StartDate</code>, <code>ShiftStartTime</code>, <code>EndDate</code>, <code>ShiftEndTime</code>, <code>LeaveType</code>, <code>agent email</code>
+            </p>
+            <button 
+              type="button" 
+              class="btn-secondary" 
+              style="margin-bottom: 20px; max-width: 300px;" 
+              onclick="downloadScheduleTemplate()">
+              Download CSV Template
+            </button>
+            <div class="form-group">
+              <label for="csv-file-input">Select CSV File</label>
+              <input type="file" id="csv-file-input" accept=".csv">
+            </div>
+            <button type="button" class="btn-primary" onclick="importScheduleCSV()">Import CSV</button>
+          </form>
+          <div id="csv-import-status" class="status-message"></div>
+          
+          <hr class="section-divider">
+          
+          <form id="schedule-form" class="form-container">
+            <h2>Manual Schedule Editor</h2>
+            <div class="form-group">
+  <label>User</label>
+  <div id="schedule-agent-select-container"></div>
+</div>
+            <div class="form-row">
+              <div class="form-group"><label for="schedule-start-date">Start Date</label><input type="date" id="schedule-start-date" required></div>
+              <div class="form-group"><label for="schedule-end-date">End Date (Optional)</label><input type="date" id="schedule-end-date"><small>Leave blank to submit for a single day.</small></div>
+            </div>
+            <div class="form-group"><label for="schedule-leave-type">Leave Type / Status</label><select id="schedule-leave-type" onchange="toggleTimeFields()"><option value="Present">Present</option><option value="Sick">Sick</option><option value="Annual">Annual</option><option value="Casual">Casual</option><option value="Absent">Absent</option><option value="Day Off">Day Off</option></select></div>
+            
+            <div id="time-fields" class="form-row">
+              <div class="form-group">
+                <label for="schedule-start-time">Shift Start Time</label>
+                <input type="time" id="schedule-start-time">
+              </div>
+              <div class="form-group">
+                <label for="schedule-end-date-shift">Shift End Date</label>
+                <input type="date" id="schedule-end-date-shift">
+                <small>Only fill if shift ends on a different day.</small>
+              </div>
+              <div class="form-group">
+                <label for="schedule-end-time">Shift End Time</label>
+                <input type="time" id="schedule-end-time">
+              </div>
+            </div>
+            <button type="button" class="btn-primary" onclick="submitSchedule()">Submit Schedule(s)</button>
+          </form>
+          <div id="schedule-status" class="status-message"></div>
+        </div>
+        
+        <!-- ================================== -->
+        <!--   TAB 6: LEAVE APPROVALS PANEL     -->
+        <!-- ================================== -->
+        <div id="leave-approval-panel" class="tab-panel">
+          <h2>Leave Request Management</h2>
+          <form id="leave-report-form" class="form-container" style="background-color: var(--input-bg); display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end;">
+            <div class="form-group" style="flex: 2; min-width: 200px; margin-bottom: 0;">
+  <label>Select User</label>
+  <div id="leave-report-user-container"></div>
+</div>
+            <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
+              <label for="leave-report-status">Select Status</label>
+              <select id="leave-report-status">
+                <option value="Pending">Pending</option>
+                <option value="Approved">Approved</option>
+                <option value="Denied">Denied</option>
+                <option value="All">All</option>
+              </select>
+            </div>
+            <button type="button" class="btn-primary" onclick="loadLeaveReport()">Load Requests</button>
+          </form>
+
+          <div id="approval-status" class="status-message"></div>
+          <div id="pending-requests-list" class="request-list" style="margin-top: 16px;">
+            <!-- JS will populate this -->
+          </div>
+        </div>
+        
+        <!-- ================================== -->
+        <!--     TAB 7: ADMIN TOOLS PANEL       -->
+        <!-- ================================== -->
+        <div id="admin-tools-panel" class="tab-panel">
+  
+  <form id="manual-punch-form" class="form-container">
+    <h2>Manual Punch Editor</h2>
+    <p class="text-color-secondary" style="margin: -16px 0 16px 0;">Manually add or overwrite a punch for a user. This will bypass duplicate/sequential checks and recalculate metrics.</p>
+    <div class="form-group">
+  <label>User</label>
+  <div id="manual-punch-user-container"></div>
+</div>
+    <div class="form-group"><label for="manual-punch-action">Punch Action</label><select id="manual-punch-action" required><option value="">-- Select an action --</option><optgroup label="Adherence"><option value="Login">Login</option><option value="First Break In">First Break In</option><option value="First Break Out">First Break Out</option><option value="Lunch In">Lunch In</option><option value="Lunch Out">Lunch Out</option><option value="Last Break In">Last Break In</option><option value="Last Break Out">Last Break Out</option><option value="Logout">Logout</option></optgroup><optgroup label="Other Codes"><option value="Coaching In">Coaching In</option><option value="Coaching Out">Coaching Out</option><option value="Meeting In">Meeting In</option><option value="Meeting Out">Meeting Out</option><option value="Personal In">Personal In</option><option value="Personal Out">Personal Out</option></optgroup></select></div>
+    <div class="form-row"><div class="form-group"><label for="manual-punch-date">Date of Punch</label><input type="date" id="manual-punch-date" required></div><div class="form-group"><label for="manual-punch-time">Time of Punch</label><input type="time" id="manual-punch-time" required></div></div>
+    <button type="button" class="btn-primary" onclick="submitManualPunch()">Submit Manual Punch</button>
+  </form>
+  <div id="manual-punch-status" class="status-message"></div>
+  
+  <hr class="section-divider">
+
+  <div id="break-config-section">
+    <h2>Break Configuration (Global)</h2>
+    <p class="text-color-secondary" style="margin: -16px 0 16px 0;">Define the standard and maximum allowed durations (in seconds) for breaks.</p>
     
-    if (rowType === breakType) {
-      // Simplistic logic: specific project overrides ALL, but here we just take the first match or 'ALL'
-      // For Phase 3, we assume global rules (Project = ALL)
-      config.default = Number(data[i][1]);
-      config.max = Number(data[i][2]);
-      break;
-    }
-  }
-  return config;
-}
+    <div id="break-config-container" class="form-container">
+      <p class="text-color-secondary">Loading configuration...</p>
+    </div>
+    <div style="margin-top: 10px; text-align: right;">
+        <button type="button" class="btn-primary" onclick="saveBreakConfig()">Save Configuration</button>
+    </div>
+    <div id="break-config-status" class="status-message"></div>
+  </div>
+  
+  <hr class="section-divider">
+  
+  <div id="balance-adjustment-section" style="display: none;"> 
+      <form id="balance-adjustment-form" class="form-container">
+      <h2>Leave Balance Management</h2>
+      <p class="text-color-secondary" style="margin: -16px 0 16px 0;">Manually adjust a user's leave balance. Use a positive number (e.g., 2) to add days, and a negative number (e.g., -1) to remove days.</p>
+      <div class="form-group">
+  <label>Select User</label>
+  <div id="balance-user-select-container"></div>
+</div>
+      <div class="form-row">
+        <div class="form-group"><label for="balance-leave-type">Leave Type</label><select id="balance-leave-type"><option value="Annual">Annual</option><option value="Sick">Sick</option><option value="Casual">Casual</option></select></div>
+        <div class="form-group"><label for="balance-amount">Amount to Adjust</label><input type="number" id="balance-amount" step="0.5" placeholder="e.g., -1 or 1.5" required></div>
+      </div>
+      <div class="form-group"><label for="balance-reason">Reason for Adjustment</label><textarea id="balance-reason" rows="2" required></textarea></div>
+      <button type="button" class="btn-primary" style="background-color: var(--konecta-yellow); color: #111827;" onclick="submitBalanceAdjustment()">Submit Balance Adjustment</button>
+    </form>
+    <div id="balance-adjust-status" class="status-message"></div>
+    <hr class="section-divider">
+  </div>
+  
+  <form id="admin-leave-form" class="form-container">
+    <h2>Submit Leave on Behalf of User</h2>
+    <p class="text-color-secondary" style="margin: -16px 0 16px 0;">Submit a leave request for a user. This will check their balance and send it to their assigned supervisor for approval.</p>
+    <div class="form-group">
+  <label>Select User</label>
+  <div id="admin-leave-user-container"></div>
+</div>
+    <div class="form-group"><label for="admin-leave-type">Leave Type</label><select id="admin-leave-type"><option value="Annual">Annual</option><option value="Sick">Sick</option><option value="Casual">Casual</option></select></div>
+    <div class="form-row"><div class="form-group"><label for="admin-leave-start-date">Start Date</label><input type="date" id="admin-leave-start-date" required></div><div class="form-group"><label for="admin-leave-end-date">End Date</label><input type="date" id="admin-leave-end-date"><small>Leave blank for a single-day request.</small></div></div>
+    <div class="form-group"><label for="admin-leave-reason">Reason (Optional)</label><textarea id="admin-leave-reason" rows="3"></textarea></div>
+    <button type="button" class="btn-primary" onclick="submitAdminLeaveRequest()">Submit Request for User</button>
+  </form>
+  <div id="admin-leave-status" class="status-message"></div>
 
+  <hr class="section-divider">
 
-// (No Change)
-function getSpreadsheet() {
-  return SpreadsheetApp.openById(SPREADSHEET_ID);
-}
+</div>
 
-// (No Change)
-function findOrCreateRow(sheet, userName, shiftDate, formattedDate) { 
-  const data = sheet.getDataRange().getValues();
-  const timeZone = Session.getScriptTimeZone();
-  let row = -1;
-  for (let i = 1; i < data.length; i++) {
-    const rowDate = new Date(data[i][0]);
-    const rowUser = data[i][1]; 
-    if (
-      rowUser && 
-      rowUser.toString().toLowerCase() === userName.toLowerCase() && 
-      Utilities.formatDate(rowDate, timeZone, "MM/dd/yyyy") === formattedDate
-    ) {
-      row = i + 1;
-      break;
-    }
-  }
+        <!-- ================================== -->
+        <!--     TAB 8: DASHBOARD PANEL         -->
+        <!-- ================================== -->
+        <div id="dashboard-panel" class="tab-panel">
+          <h2 id="dashboard-title">Team Dashboard</h2>
+          <div id="dashboard-controls" class="form-container" style="background-color: var(--input-bg);">
+            <form id="dashboard-form">
+              <div class="form-group" id="dashboard-hierarchy-container">
+                <label>Team Hierarchy (Click user to select)</label>
+                <div id="hierarchy-tree-view">
+                  <p class="text-color-secondary">Loading team structure...</p>
+                </div>
+                <small class="text-color-secondary">Selected: <strong id="selected-user-display">None</strong></small>
+              </div>
+              
+              <div class="form-group">
+                <label for="dashboard-date">Select Date</label>
+                <input type="date" id="dashboard-date" required>
+              </div>
+              
+              <div id="dashboard-filters">
+                <button type="button" class="btn-primary" onclick="loadDashboard()">Load Dashboard for Selected</button>
+                <button type="button" class="btn-secondary" onclick="loadMyFullHierarchy()">Load My Full Hierarchy</button>
+                <button type="button" class="save-btn" onclick="saveCurrentSelection()">Save Current Selection</button>
+              </div>
+            </form>
+          </div>
+          <div id="dashboard-status" class="status-message"></div>
+          
+          <hr class="section-divider">
 
-  if (row === -1) {
-    row = sheet.getLastRow() + 1;
-    sheet.getRange(row, 1).setValue(shiftDate);
-    sheet.getRange(row, 2).setValue(userName); 
-  }
-  return row;
-}
+          <div id="command-center-stats">
+            <div class="metric-card">
+              <span class="metric-title">Real-Time Capacity</span>
+              <span class="metric-value" id="metric-capacity">--%</span>
+              <span class="metric-sub" id="metric-capacity-sub">0/0 Agents</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-title">Schedule Adherence</span>
+              <span class="metric-value" id="metric-adherence">--%</span>
+              <span class="metric-sub">Target: 95%</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-title">Current Shrinkage</span>
+              <span class="metric-value" id="metric-shrinkage">--%</span>
+              <span class="metric-sub" id="metric-shrinkage-sub">0 Unavailable</span>
+            </div>
+            <div class="metric-card" style="cursor: pointer;" onclick="exportDashboardCSV()">
+              <span class="metric-title">Export Data</span>
+              <span class="metric-value" style="font-size: 1.5rem;">📥 CSV</span>
+              <span class="metric-sub">Download Report</span>
+            </div>
+          </div>
 
-function getOrCreateSheet(ss, name) {
-  if (!name) return null;
-  let sheet = ss.getSheetByName(name);
-  if (!sheet) {
-    sheet = ss.insertSheet(name);
+          <div id="dashboard-grid">
+            <div class="dashboard-card full-width">
+              <h3>Agent Status (Real-Time)</h3>
+              <div id="status-agent-list" class="chart-container"></div>
+            </div>
+            <div class="dashboard-card full-width">
+              <h3>Adherence Details (Today)</h3>
+              <div id="adherence-detail-table" class="dashboard-list-container"></div>
+            </div>
+            <div class="dashboard-card full-width">
+              <h3>Pending Leave Requests (for selected users)</h3>
+              <div id="pending-leave-table" class="dashboard-list-container"></div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- ================================== -->
+        <!--    NEW TAB 9: REPORTING LINE       -->
+        <!-- ================================== -->
+        <div id="reporting-line-panel" class="tab-panel">
+
+          <div id="pending-movements-section">
+            <h2>Pending Reporting Line Approvals</h2>
+            <p class="text-color-secondary">This section shows requests for you to approve, or requests pending for admins who report to you.</p>
+            <div id="movement-approval-status" class="status-message"></div>
+            <div id="pending-movements-list" class="request-list">
+              <p class="text-color-secondary">Loading pending approvals...</p>
+            </div>
+          </div>
+          
+          <hr class="section-divider">
+
+          <form id="reporting-line-form" class="form-container">
+  <h2>Submit New Movement Request</h2>
+  <p class="text-color-secondary" style="margin: -16px 0 16px 0;">Select a user to move. You will be prompted to confirm their Project Manager.</p>
+  
+  <div class="form-group">
+    <label>Select User to Move</label>
+    <div id="reporting-line-user-container" onchange="onReportingLineUserChange()"></div>
+  </div>
+
+  <div class="form-group">
+    <label>Assign New Direct Manager</label>
+    <div id="reporting-line-supervisor-container"></div>
+  </div>
+
+  <div id="pm-change-section" style="display:none; padding: 15px; background: var(--input-bg); border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 20px;">
+    <label style="color: var(--konecta-blue); font-weight:600;">Project Manager Selection</label>
+    <p style="margin: 5px 0 10px 0; font-size: 0.9rem;">
+      Current Project Manager: <strong id="current-pm-display">Loading...</strong>
+    </p>
     
-    if (name === SHEET_NAMES.employeesCore) {
-      sheet.getRange("A1:J1").setValues([["EmployeeID", "Name", "Email", "Role", "AccountStatus", "DirectManagerEmail", "FunctionalManagerEmail", "AnnualBalance", "SickBalance", "CasualBalance"]]);
-      sheet.setFrozenRows(1);
-    } 
-    else if (name === SHEET_NAMES.employeesPII) {
-      sheet.getRange("A1:H1").setValues([["EmployeeID", "HiringDate", "Salary", "IBAN", "Address", "Phone", "MedicalInfo", "ContractType"]]);
-      sheet.getRange("B:B").setNumberFormat("yyyy-mm-dd");
-      sheet.setFrozenRows(1);
-    }
-    // --- PHASE 8 UPDATE: Added Overtime Rules ---
-    else if (name === SHEET_NAMES.breakConfig) {
-      sheet.getRange("A1:D1").setValues([["BreakType", "DefaultDuration (Sec)", "MaxDuration (Sec)", "ProjectID"]]);
-      sheet.getRange("A2:D6").setValues([
-        ["First Break", 900, 1200, "ALL"], 
-        ["Lunch", 1800, 2400, "ALL"],      
-        ["Last Break", 900, 1200, "ALL"],
-        ["Overtime Pre-Shift", 300, 0, "ALL"],  // 5 mins threshold
-        ["Overtime Post-Shift", 300, 0, "ALL"]  // 5 mins threshold
-      ]);
-      sheet.setFrozenRows(1);
-    }
-    else if (name === SHEET_NAMES.assets) {
-      sheet.getRange("A1:E1").setValues([["AssetID", "Type", "AssignedTo_EmployeeID", "DateAssigned", "Status"]]);
-      sheet.setFrozenRows(1);
-    }
-    else if (name === SHEET_NAMES.projects) {
-      sheet.getRange("A1:D1").setValues([["ProjectID", "ProjectName", "ProjectManagerEmail", "AllowedRoles"]]);
-      sheet.setFrozenRows(1);
-    }
-    else if (name === SHEET_NAMES.projectLogs) {
-      sheet.getRange("A1:E1").setValues([["LogID", "EmployeeID", "ProjectID", "Date", "HoursLogged"]]);
-      sheet.setFrozenRows(1);
-    }
-    else if (name === SHEET_NAMES.warnings) {
-      sheet.getRange("A1:H1").setValues([["WarningID", "EmployeeID", "Type", "Level", "Date", "Description", "Status", "IssuedBy"]]);
-      sheet.setFrozenRows(1);
-    }
-    else if (name === SHEET_NAMES.schedule) {
-      sheet.getRange("A1:M1").setValues([["Name", "StartDate", "ShiftStartTime", "EndDate", "ShiftEndTime", "LeaveType", "agent email", "Break1_Start", "Break1_End", "Lunch_Start", "Lunch_End", "Break2_Start", "Break2_End"]]);
-      sheet.getRange("B:B").setNumberFormat("mm/dd/yyyy");
-      sheet.getRange("C:C").setNumberFormat("hh:mm");
-      sheet.getRange("D:D").setNumberFormat("mm/dd/yyyy");
-      sheet.getRange("E:E").setNumberFormat("hh:mm");
-      sheet.getRange("H:M").setNumberFormat("hh:mm");
-    } 
-    // --- UPDATED: Added LastAction and LastActionTimestamp (Cols Y & Z) ---
-    else if (name === SHEET_NAMES.adherence) {
-      sheet.getRange("A1:Z1").setValues([["Date", "User Name", "Login", "First Break In", "First Break Out", "Lunch In", "Lunch Out", "Last Break In", "Last Break Out", "Logout", "Tardy (Seconds)", "Overtime (Seconds)", "Early Leave (Seconds)", "Leave Type", "Admin Audit", "—", "1st Break Exceed", "Lunch Exceed", "Last Break Exceed", "Absent", "Admin Code", "BreakWindowViolation", "NetLoginHours", "PreShiftOvertime", "LastAction", "LastActionTimestamp"]]);
-      sheet.getRange("C:J").setNumberFormat("hh:mm:ss");
-      sheet.getRange("Z:Z").setNumberFormat("hh:mm:ss"); // Format new timestamp col
-    } 
-    else if (name === SHEET_NAMES.logs) {
-      sheet.getRange("A1:E1").setValues([["Timestamp", "User Name", "Email", "Action", "Time"]]);
-    } 
-    else if (name === SHEET_NAMES.otherCodes) { 
-      sheet.getRange("A1:G1").setValues([["Date", "User Name", "Code", "Time In", "Time Out", "Duration (Seconds)", "Admin Audit (Email)"]]);
-      sheet.getRange("D:E").setNumberFormat("hh:mm:ss");
-    } 
-    else if (name === SHEET_NAMES.leaveRequests) { 
-      sheet.getRange("A1:N1").setValues([["RequestID", "Status", "RequestedByEmail", "RequestedByName", "LeaveType", "StartDate", "EndDate", "TotalDays", "Reason", "ActionDate", "ActionBy", "SupervisorEmail", "ActionReason", "SickNoteURL"]]);
-      sheet.getRange("F:G").setNumberFormat("mm/dd/yyyy");
-      sheet.getRange("J:J").setNumberFormat("mm/dd/yyyy");
-    } 
-    else if (name === SHEET_NAMES.coachingSessions) { 
-      sheet.getRange("A1:M1").setValues([["SessionID", "AgentEmail", "AgentName", "CoachEmail", "CoachName", "SessionDate", "WeekNumber", "OverallScore", "FollowUpComment", "SubmissionTimestamp", "FollowUpDate", "FollowUpStatus", "AgentAcknowledgementTimestamp"]]);
-      sheet.getRange("F:F").setNumberFormat("mm/dd/yyyy");
-      sheet.getRange("J:J").setNumberFormat("mm/dd/yyyy hh:mm:ss");
-      sheet.getRange("K:K").setNumberFormat("mm/dd/yyyy");
-      sheet.getRange("M:M").setNumberFormat("mm/dd/yyyy hh:mm:ss");
-    } 
-    else if (name === SHEET_NAMES.coachingScores) { 
-      sheet.getRange("A1:E1").setValues([["SessionID", "Category", "Criteria", "Score", "Comment"]]);
-    } 
-    else if (name === SHEET_NAMES.coachingTemplates) {
-      sheet.getRange("A1:D1").setValues([["TemplateName", "Category", "Criteria", "Status"]]);
-      sheet.setFrozenRows(1);
-    }
-    else if (name === SHEET_NAMES.pendingRegistrations) {
-      sheet.getRange("A1:J1").setValues([["RequestID", "UserEmail", "UserName", "DirectManagerEmail", "FunctionalManagerEmail", "DirectStatus", "FunctionalStatus", "Address", "Phone", "RequestTimestamp"]]);
-      sheet.setFrozenRows(1);
-      sheet.getRange("J:J").setNumberFormat("mm/dd/yyyy hh:mm:ss");
-    }
-    else if (name === SHEET_NAMES.movementRequests) {
-      sheet.getRange("A1:J1").setValues([["MovementID", "Status", "UserToMoveEmail", "UserToMoveName", "FromSupervisorEmail", "ToSupervisorEmail", "RequestTimestamp", "ActionTimestamp", "ActionByEmail", "RequestedByEmail"]]);
-      sheet.getRange("G:H").setNumberFormat("mm/dd/yyyy hh:mm:ss");
-    }
-    else if (name === SHEET_NAMES.announcements) {
-      sheet.getRange("A1:E1").setValues([["AnnouncementID", "Content", "Status", "CreatedByEmail", "Timestamp"]]);
-      sheet.getRange("E:E").setNumberFormat("mm/dd/yyyy hh:mm:ss");
-    }
-    else if (name === SHEET_NAMES.roleRequests) {
-      sheet.getRange("A1:J1").setValues([["RequestID", "UserEmail", "UserName", "CurrentRole", "RequestedRole", "Justification", "RequestTimestamp", "Status", "ActionByEmail", "ActionTimestamp"]]);
-      sheet.getRange("G:G").setNumberFormat("mm/dd/yyyy hh:mm:ss");
-      sheet.getRange("J:J").setNumberFormat("mm/dd/yyyy hh:mm:ss");
-    }
-    else if (name === SHEET_NAMES.offboarding) {
-      sheet.getRange("A1:O1").setValues([["RequestID", "EmployeeID", "Name", "Email", "Type", "Reason", "Status", "DirectManager", "ProjectManager", "DirectStatus", "ProjectStatus", "HRStatus", "RequestDate", "ExitDate", "InitiatedBy"]]);
-      sheet.setFrozenRows(1);
-    }
-  }
+    <div style="margin-bottom: 10px;">
+      <label style="margin-right: 15px; cursor: pointer;">
+        <input type="radio" name="pm-action" value="keep" checked onclick="togglePMDropdown(false)"> Keep Current
+      </label>
+      <label style="cursor: pointer;">
+        <input type="radio" name="pm-action" value="change" onclick="togglePMDropdown(true)"> Change
+      </label>
+    </div>
 
-  if (name === SHEET_NAMES.adherence) sheet.getRange("C:J").setNumberFormat("hh:mm:ss");
-  if (name === SHEET_NAMES.otherCodes) sheet.getRange("D:E").setNumberFormat("hh:mm:ss");
-  if (name === SHEET_NAMES.employeesPII) sheet.getRange("B:B").setNumberFormat("yyyy-mm-dd");
-  if (name === SHEET_NAMES.schedule) sheet.getRange("H:M").setNumberFormat("hh:mm");
+    <div id="pm-dropdown-wrapper" style="display:none;">
+      <label>Select New Project Manager</label>
+      <div id="reporting-line-pm-container"></div>
+    </div>
+  </div>
+  
+  <button type="button" class="btn-primary" onclick="submitMovementRequest()">Submit Movement Request</button>
+</form>
+          <div id="movement-request-status" class="status-message"></div>
 
-  return sheet;
-}
+          <hr class="section-divider">
 
-// (No Change)
-function timeDiffInSeconds(start, end) {
-  if (!start || !end || !(start instanceof Date) || !(end instanceof Date)) {
-    return 0;
-  }
-  return Math.round((end.getTime() - start.getTime()) / 1000);
-}
+          <div id="movement-history-section">
+            <h2>User Movement History</h2>
+            <p classs="text-color-secondary">Select one of your subordinates to view their complete movement history.</p>
+            <form id="movement-history-form" class="form-container" style="background-color: var(--input-bg); display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end;">
+              <div class="form-group" style="flex: 2; min-width: 200px; margin-bottom: 0;">
+  <label>Select User</label>
+  <div id="movement-history-user-container"></div>
+</div>
+              <button type="button" class="btn-primary" onclick="loadMovementHistory()">Load History</button>
+            </form>
+            <div id="movement-history-status" class="status-message"></div>
+            <div id="movement-history-list" class="request-list" style="margin-top: 16px;">
+              <p class="text-color-secondary">Select a user to view their movement history.</p>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ================================== -->
+        <!--    NEW TAB 10: COACHING PANEL      -->
+        <!-- ================================== -->
+        <div id="coaching-panel" class="tab-panel">
+          
+          <div id="coaching-form-container" class="form-container" style="display: none;">
+            <h2>Submit New Coaching</h2>
+            <div class="form-group">
+  <label>Select User</label>
+  <div id="coaching-agent-select-container"></div>
+</div>
+            <div class="form-group">
+              <label for="coaching-template-select">Select Coaching Template</label>
+              <select id="coaching-template-select" required onchange="loadCoachingForm()">
+                <option value="">-- Select a template --</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="coaching-session-date">Session Date</label>
+                <input type="date" id="coaching-session-date" required>
+              </div>
+              <div class="form-group">
+                <label for="coaching-week-number">Week Number</label>
+                <input type="text" id="coaching-week-number" readonly style="background-color: var(--border-color);">
+              </div>
+            </div>
+            
+            <h3>Quality Score
+              <span id="coaching-overall-score" style="float: right;">N/A</span>
+            </h3>
+            <div id="quality-score-form">
+              <!-- JS will populate this -->
+            </div>
+            
+            <hr class="section-divider">
+
+            <div class="form-group">
+              <label for="coaching-follow-up">Follow-up / Comments</label>
+              <textarea id="coaching-follow-up" rows="4"></textarea>
+            </div>
+            
+            <div class="form-group">
+              <label for="coaching-follow-up-date">Follow-up Date (Optional)</label>
+              <input type="date" id="coaching-follow-up-date">
+            </div>
+            
+            <button type="button" class="btn-primary" onclick="submitNewCoaching()">Submit Coaching</button>
+            <div id="coaching-submit-status" class="status-message"></div>
+          </div>
+
+          <div id="coaching-list-container">
+            <div class="coaching-list-header">
+              <h2 id="coaching-list-title" style="margin: 0;">My Coaching History</h2>
+              <button type="button" class="export-btn" id="export-coaching-btn" onclick="exportCoachingHistory()">Export History</button>
+            </div>
+            
+            <div id="coaching-list-status" class="status-message"></div>
+            <div id="coaching-list" class="request-list">
+              <p class="text-color-secondary">Your coaching history will appear here.</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- ================================== -->
+        <!--   TAB 11: COACHING ADMIN PANEL     -->
+        <!-- ================================== -->
+        <div id="coaching-admin-panel" class="tab-panel" style="display:none;">
+          <form id="template-create-form" class="form-container">
+            <h2>Create New Coaching Template</h2>
+            <p class="text-color-secondary" style="margin: -16px 0 16px 0;">Create a new template. Add categories and criteria below. All fields are required.</p>
+            
+            <div class="form-group">
+              <label for="template-name">Template Name</label>
+              <input type="text" id="template-name" placeholder="e.g., 'Q1 Sales Template'" required>
+            </div>
+            
+            <div id="template-categories-container">
+              <!-- JS will populate this -->
+            </div>
+            
+            <button type="button" class="btn-secondary" onclick="addTemplateCategory()" style="margin: 10px 0;">+ Add Category</button>
+            <hr class="section-divider">
+            <button type="button" class="btn-primary" onclick="saveNewTemplate()">Save New Template</button>
+          </form>
+          <div id="coaching-admin-status" class="status-message"></div>
+        </div>
+
+        <!-- ================================== -->
+        <!--  TAB 12: REGISTRATION ADMIN PANEL  -->
+        <!-- ================================== -->
+        <div id="registration-admin-panel" class="tab-panel">
+          <h2>New User Registrations</h2>
+          <p class="text-color-secondary">Approve or deny new users who have registered and selected their supervisor. Approving them will activate their account.</p>
+          <div id="registration-admin-status" class="status-message"></div>
+          <div id="registration-admin-list" class="request-list" style="margin-top: 16px;">
+            <!-- JS will populate this -->
+          </div>
+        </div>
+
+        <!-- ================================== -->
+        <!--  TAB 12.1: PROJECT ADMIN PANEL  -->
+        <!-- ================================== -->
+        
+
+        <div id="project-admin-panel" class="tab-panel">
+  <h2>Project Dashboard</h2>
+  
+  <div class="form-group">
+      <label>Select Project</label>
+      <select id="project-admin-select" onchange="loadProjectDashboardData()">
+          <option value="">-- Loading --</option>
+      </select>
+  </div>
+
+  <div id="project-stats-grid" style="display:grid; grid-template-columns: repeat(4, 1fr); gap:15px; margin-bottom:20px;">
+      <div class="metric-card"><span class="metric-title">Total Staff</span><span class="metric-value" id="prj-stat-total">0</span></div>
+      <div class="metric-card"><span class="metric-title">Agents</span><span class="metric-value" id="prj-stat-agents">0</span></div>
+      <div class="metric-card"><span class="metric-title">Supervisors</span><span class="metric-value" id="prj-stat-supers">0</span></div>
+      <div class="metric-card"><span class="metric-title">TLs</span><span class="metric-value" id="prj-stat-tls">0</span></div>
+  </div>
+
+  <hr class="section-divider">
+
+  <h3>Recent Requests (Audit Log)</h3>
+  <div id="project-requests-list" class="request-list">
+      <p class="text-color-secondary">Select a project to view requests.</p>
+  </div>
+  
+  <hr class="section-divider">
+  
+  <form id="project-form" class="form-container">
+    <h3>Create/Edit Project</h3>
+    <div class="form-group">
+      <label>Project Name</label>
+      <input type="text" id="proj-name" required>
+    </div>
+    <div class="form-group">
+      <label>Project Manager Email</label>
+      <input type="email" id="proj-manager">
+    </div>
+    <button type="button" class="btn-primary" onclick="saveProject()">Save Project</button>
+  </form>
+</div>
+        <!-- ================================== -->
+        <!--  TAB 13: ANNOUNCEMENTS ADMIN PANEL -->
+        <!-- ================================== -->
+        <div id="announcements-admin-panel" class="tab-panel">
+          <h2>Manage Announcements</h2>
+          <p class="text-color-secondary">Create, edit, or delete announcements that appear on the Punch Clock.</p>
+
+          <form id="announcement-form" class="form-container">
+            <input type="hidden" id="announcement-id" value="">
+            <div class="form-group">
+              <label for="announcement-content">Announcement Content</label>
+              <textarea id="announcement-content" rows="3" placeholder="Enter announcement text..."></textarea>
+            </div>
+            <div class="form-group">
+              <label for="announcement-status">Status</label>
+              <select id="announcement-status">
+                <option value="Active">Active (Show to users)</option>
+                <option value="Archived">Archived (Hide from users)</option>
+              </select>
+            </div>
+            <button type="button" class="btn-primary" onclick="saveAnnouncement()">Save Announcement</button>
+            <button type="button" class="btn-secondary" style="background-color: transparent; color: var(--text-color-secondary); border-color: var(--border-color);" onclick="clearAnnouncementForm()">Clear Form</button>
+          </form>
+          <div id="announcement-admin-status" class="status-message"></div>
+
+          <hr class="section-divider">
+
+          <h3>Existing Announcements</h3>
+          <div id="announcement-admin-list" class="request-list" style="margin-top: 16px;">
+            <p class="text-color-secondary">Loading announcements...</p>
+          </div>
+        </div>
+
+        <!-- ================================== -->
+        <!--  TAB 14: Recruitment PANEL -->
+        <!-- ================================== -->
+
+        <div id="recruitment-panel" class="tab-panel">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+    <h2>Recruitment & Hiring</h2>
+    <div>
+        <button class="btn-secondary" onclick="toggleJobBoard()">Manage Job Board</button>
+        <button class="btn-primary" onclick="showRequisitionModal()">+ Open Requisition</button>
+    </div>
+  </div>
+
+  <div id="job-board-view" style="display:none; margin-bottom: 20px; background: var(--card-bg); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color);">
+    <h3>Active Job Requisitions</h3>
+    <div id="job-list-container">Loading jobs...</div>
+  </div>
+
+  <div class="form-group">
+    <input type="text" id="candidate-search" placeholder="Search candidates..." onkeyup="filterCandidates()" style="max-width: 300px;">
+  </div>
+
+  <div id="candidate-list" class="request-list">
+    <p class="text-color-secondary">Loading pipeline...</p>
+  </div>
+</div>
+
+        <!-- ================================== -->
+        <!--  TAB 15: Performance PANEL -->
+        <!-- ================================== -->
 
 
-// ================= DAILY AUTO-LOG FUNCTION =================
-function dailyLeaveSweeper() {
-  const ss = getSpreadsheet();
-  const scheduleSheet = getOrCreateSheet(ss, SHEET_NAMES.schedule);
-  const adherenceSheet = getOrCreateSheet(ss, SHEET_NAMES.adherence);
-  const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-  const timeZone = Session.getScriptTimeZone();
-  // 1. Define the 7-day lookback period
-  const lookbackDays = 7;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+<div id="performance-panel" class="tab-panel">
+  <h2>Performance Management</h2>
+  
+  <div id="manager-review-section" style="display:none; margin-bottom:30px; background:var(--input-bg); padding:20px; border-radius:8px; border:1px solid var(--border-color);">
+    <h3 style="margin-top:0; color:var(--konecta-blue);">Submit New Review</h3>
+    <form id="perf-form">
+      <div class="form-row">
+        <div class="form-group">
+  <label>Select Employee</label>
+  <div id="perf-employee-select-container"></div>
+</div>
+        <div class="form-group">
+          <label>Review Period</label>
+          <select id="perf-period">
+            <option value="Q1">Q1</option>
+            <option value="Q2">Q2</option>
+            <option value="Q3">Q3</option>
+            <option value="Q4">Q4</option>
+            <option value="Annual">Annual</option>
+            <option value="Probation">Probation</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Year</label>
+          <input type="number" id="perf-year" value="2025">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Rating (1 - Poor to 5 - Excellent)</label>
+        <div style="display:flex; gap:15px; align-items:center;">
+          <input type="range" id="perf-rating" min="1" max="5" step="1" oninput="document.getElementById('rating-val').innerText = this.value">
+          <span id="rating-val" style="font-weight:bold; font-size:1.2rem; color:var(--konecta-dark);">3</span>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Manager Comments</label>
+        <textarea id="perf-comments" rows="3" placeholder="Highlight achievements and areas for improvement..."></textarea>
+      </div>
+      <button type="button" class="btn-primary" onclick="submitPerformanceReview()">Submit Review</button>
+    </form>
+    <div id="perf-submit-status" class="status-message"></div>
+  </div>
 
-  const endDate = new Date(today); // Today
-  endDate.setDate(endDate.getDate() - 1); // End date is yesterday
+  <h3 style="margin-bottom:15px;">My Performance History</h3>
+  <div id="perf-history-list" class="request-list">
+    <p class="text-color-secondary">Loading reviews...</p>
+  </div>
+</div>
 
-  const startDate = new Date(endDate);
-  startDate.setDate(startDate.getDate() - (lookbackDays - 1)); // Start date is 7 days ago
 
-  const startDateStr = Utilities.formatDate(startDate, timeZone, "MM/dd/yyyy");
-  const endDateStr = Utilities.formatDate(endDate, timeZone, "MM/dd/yyyy");
+        <!-- ================================== -->
+        <!--  TAB 16: Finance ADMIN PANEL -->
+        <!-- ================================== -->
 
-  Logger.log(`Starting dailyLeaveSweeper for date range: ${startDateStr} to ${endDateStr}`);
-  // 2. Get all Adherence rows for the past 7 days and create a lookup Set
-  const allAdherence = adherenceSheet.getDataRange().getValues();
-  const adherenceLookup = new Set();
-  for (let i = 1; i < allAdherence.length; i++) {
-    try {
-      const rowDate = new Date(allAdherence[i][0]);
-      if (rowDate >= startDate && rowDate <= endDate) {
-        const rowDateStr = Utilities.formatDate(rowDate, timeZone, "MM/dd/yyyy");
-        const userName = allAdherence[i][1].toString().trim().toLowerCase();
-        adherenceLookup.add(`${userName}:${rowDateStr}`);
-      }
-    } catch (e) {
-      Logger.log(`Skipping adherence row ${i+1}: ${e.message}`);
-    }
-  }
-  Logger.log(`Found ${adherenceLookup.size} existing adherence records in the date range.`);
-  // 3. Get all Schedules and loop through them
-  const allSchedules = scheduleSheet.getDataRange().getValues();
-  let missedLogs = 0;
-  for (let i = 1; i < allSchedules.length; i++) {
-    try {
-      // *** THIS LINE IS THE FIX ***
-      // It now correctly reads all 7 columns, matching your sheet structure.
-      const [schName, schDate, schStart, schEndDate, schEndTime, schLeave, schEmail] = allSchedules[i];
-      // *** END OF FIX ***
 
-      const leaveType = (schLeave || "").toString().trim(); // schLeave is now correctly column F (index 5)
+<div id="finance-admin-panel" class="tab-panel">
+  <h2>Financial Management</h2>
+  
+  <div class="button-group">
+      <button class="btn-secondary" onclick="document.getElementById('fin-create-tmpl').style.display='block'">Create Template</button>
+      <button class="btn-secondary" onclick="loadEntitlementTemplates()">Load Templates</button>
+  </div>
 
-      // This logic is now correct because schLeave and schEmail are from the right columns
-      if (leaveType === "" || !schName || !schEmail) {
-        continue;
-      }
+  <div id="fin-create-tmpl" class="form-container" style="display:none; margin-bottom:20px;">
+      <h3>New Entitlement Template</h3>
+      <div class="form-row">
+          <div class="form-group"><label>Template Name</label><input type="text" id="tmpl-name" placeholder="e.g. Q1 Performance Bonus"></div>
+          <div class="form-group">
+            <label>Type</label>
+            <input type="text" id="tmpl-type" list="entitlement-types" placeholder="Select or type custom...">
+            <datalist id="entitlement-types">
+                <option value="Bonus">Bonus</option>
+                <option value="Deduction">Deduction</option>
+                <option value="Allowance">Allowance</option>
+                <option value="Variable Pay">Variable Pay</option>
+                <option value="One Time Payment">One Time Payment</option>
+                <option value="Overtime Payout">Overtime Payout</option>
+            </datalist>
+          </div>
+      </div>
+      <div class="form-row">
+          <div class="form-group"><label>Default Amount</label><input type="number" id="tmpl-amount"></div>
+          <div class="form-group"><label>Currency</label><input type="text" id="tmpl-curr" value="EGP"></div>
+      </div>
+      <button class="btn-primary" onclick="saveEntitlementTemplate()">Save Template</button>
+  </div>
 
-     const schDateObj = parseDate(schDate);
+  <hr class="section-divider">
 
-      if (schDateObj && schDateObj >= startDate && schDateObj <= endDate) {
-        const schDateStr = Utilities.formatDate(schDateObj, timeZone, "MM/dd/yyyy");
-        const userName = schName.toString().trim();
-        const userNameLower = userName.toLowerCase();
+  <h3>Apply Template to Employees</h3>
+  <div class="form-container">
+      <div class="form-group">
+          <label>Select Template</label>
+          <select id="fin-apply-tmpl-select"><option>-- Load Templates First --</option></select>
+      </div>
+      <div class="form-group">
+          <label>Select Users</label>
+          <div id="fin-apply-users-container"></div> </div>
+      <button class="btn-primary" onclick="applyTemplateToUsers()">Apply to Selected</button>
+  </div>
+</div>
 
-        const lookupKey = `${userNameLower}:${schDateStr}`;
-        // 4. Check if this user is *already* in the Adherence sheet
-        if (adherenceLookup.has(lookupKey)) {
-          continue; // We found them, so skip
+        <!-- ================================== -->
+        <!--  TAB 16: Finance ADMIN PANEL -->
+        <!-- ================================== -->
+
+<div id="hr-admin-panel" class="tab-panel">
+  <h2>HR Administration</h2>
+
+  <div class="info-card" style="text-align: left; background-color: var(--status-info-bg); border-color: var(--status-info-text);">
+    <h3 style="margin-top: 0; font-size: 1rem; color: var(--status-info-text);">Pending Data Change Requests</h3>
+    <div id="hr-data-requests-list" style="max-height: 150px; overflow-y: auto; margin-top: 10px;">
+      <p class="text-color-secondary">Loading requests...</p>
+    </div>
+  </div>
+
+  <hr class="section-divider">
+
+  <div class="form-container">
+    <h3>Employee PII Editor</h3>
+    <div class="form-group" style="display: flex; gap: 10px;">
+      <input type="text" id="hr-pii-search" placeholder="Search by Name or Email..." style="flex: 1;">
+      <button class="btn-primary" onclick="searchEmployeePII()">Search</button>
+    </div>
+    <div id="hr-pii-search-status" class="status-message"></div>
+
+    <div id="hr-pii-form-container" style="display: none; margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 20px;">
+      <input type="hidden" id="hr-pii-empid">
+      <h4 id="hr-pii-header" style="color: var(--konecta-blue);"></h4>
+      
+      <div class="form-row">
+        <div class="form-group"><label>National ID</label><input type="text" id="hr-pii-natid"></div>
+        <div class="form-group"><label>Passport No.</label><input type="text" id="hr-pii-passport"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Social Insurance</label><input type="text" id="hr-pii-social"></div>
+        <div class="form-group"><label>IBAN</label><input type="text" id="hr-pii-iban"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Personal Email</label><input type="email" id="hr-pii-pemail"></div>
+        <div class="form-group"><label>Phone</label><input type="text" id="hr-pii-phone"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Address</label><input type="text" id="hr-pii-address"></div>
+        <div class="form-group"><label>Marital Status</label>
+          <select id="hr-pii-marital">
+            <option value="Single">Single</option>
+            <option value="Married">Married</option>
+            <option value="Divorced">Divorced</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Basic Salary</label><input type="number" id="hr-pii-basic"></div>
+        <div class="form-group"><label>Variable Pay</label><input type="number" id="hr-pii-variable"></div>
+      </div>
+
+      <button class="btn-primary" onclick="saveEmployeePII()">Save Changes</button>
+    </div>
+  </div>
+
+  <hr class="section-divider">
+
+  <div class="form-container">
+    <h3>Leave Balance Adjustment</h3>
+    <div class="form-group">
+      <label>Select User</label>
+      <div id="hr-balance-user-select-container"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Type</label><select id="hr-balance-type"><option value="Annual">Annual</option><option value="Sick">Sick</option><option value="Casual">Casual</option></select></div>
+      <div class="form-group"><label>Amount (+/-)</label><input type="number" id="hr-balance-amount" step="0.5"></div>
+    </div>
+    <div class="form-group"><label>Reason</label><input type="text" id="hr-balance-reason"></div>
+    <button class="btn-primary" style="background-color: var(--konecta-yellow); color: #000;" onclick="submitHrBalanceAdjustment()">Adjust Balance</button>
+    <div id="hr-balance-status" class="status-message"></div>
+  </div>
+
+  <br>
+  
+
+</div>
+
+        <!-- ================================== -->
+        <!--  TAB 17: Overtime PANEL -->
+        <!-- ================================== -->
+
+
+<div id="overtime-panel" class="tab-panel">
+  <h2>Overtime & Day Off Management</h2>
+  
+  <div class="form-container">
+    <div style="display:flex; justify-content:space-between;">
+        <h3>Request / Assign Hours</h3>
+        <div id="ot-assign-toggle" style="display:none;">
+            <label><input type="checkbox" id="ot-is-assignment" onchange="toggleOtAssignment()"> Assign to Agent</label>
+        </div>
+    </div>
+
+    <div id="ot-employee-select-wrapper" style="display:none; margin-bottom:15px; padding:10px; background:#f3f4f6; border-radius:6px;">
+        
+        <div id="ot-employee-select-container"></div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group"><label>Date</label><input type="date" id="ot-req-date"></div>
+      <div class="form-group">
+        <label>Type</label>
+        <select id="ot-req-type">
+          <option value="Post-Shift">Post-Shift (Stay Late)</option>
+          <option value="Pre-Shift">Pre-Shift (Come Early)</option>
+          <option value="Work Day Off">Work Day Off (Cancel Off)</option>
+        </select>
+      </div>
+    </div>
+    
+    <div class="form-row">
+      <div class="form-group"><label>Start</label><input type="time" id="ot-req-start"></div>
+      <div class="form-group"><label>End</label><input type="time" id="ot-req-end"></div>
+    </div>
+
+    <div class="form-group"><label>Reason</label><input type="text" id="ot-req-reason" placeholder="Reason..."></div>
+    <button class="btn-primary" onclick="submitOtRequest()">Submit</button>
+    <div id="ot-status" class="status-message"></div>
+  </div>
+
+  <hr class="section-divider">
+
+  <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 15px;">
+    <h3 style="margin: 0;">Request History</h3>
+    <div class="form-group" style="margin: 0; min-width: 180px;">
+        <label for="ot-filter-status" style="font-size: 0.8rem; margin-bottom: 4px;">Filter Status</label>
+        <select id="ot-filter-status" onchange="loadOvertimeRequests()" style="padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); width: 100%;">
+            <option value="Pending">⚡ Pending Actions</option>
+            <option value="Approved">✅ Approved</option>
+            <option value="Denied">❌ Denied</option>
+            <option value="All">📂 All History</option>
+        </select>
+    </div>
+  </div>
+  <div id="ot-request-list" class="request-list">Loading...</div> </div>
+
+        <!-- ================================== -->
+        <!--  TAB 18: offboarding PANEL -->
+        <!-- ================================== -->
+
+  <div id="offboarding-panel" class="tab-panel">
+  <h2>Offboarding & Exits</h2>
+  
+  <div id="offboard-initiate-section" class="form-container" style="margin-bottom:20px; border-color: #dc2626;">
+      <h3 style="color:#dc2626; margin-top:0;">⚠ Initiate Termination</h3>
+      <p class="text-color-secondary">Submit a request to terminate an employee. Requires HR Approval.</p>
+      <div class="form-row">
+          <div class="form-group">
+              <label>Select Employee</label>
+              <div id="offboard-term-user-container"></div>
+          </div>
+          <div class="form-group"><label>Exit Date</label><input type="date" id="term-date"></div>
+      </div>
+      <div class="form-group"><label>Reason</label><textarea id="term-reason" rows="2"></textarea></div>
+      <button class="btn-danger" onclick="submitTermination()">Submit Termination</button>
+  </div>
+
+  <hr class="section-divider">
+
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h3>Request Queue</h3>
+      <button class="btn-secondary" onclick="loadOffboardingRequests()">Refresh</button>
+  </div>
+  <div id="offboarding-list" class="request-list">Loading...</div>
+</div>
+
+
+
+        <!-- ================================== -->
+        <!--  TAB 18: Analytics PANEL -->
+        <!-- ================================== -->
+
+
+<div id="analytics-panel" class="tab-panel">
+  <h2>Enterprise Reports & Analytics</h2>
+  
+  <div class="form-container" style="display:flex; gap:15px; flex-wrap:wrap; align-items:flex-end; background:var(--input-bg);">
+      <div class="form-group" style="flex:1; min-width:200px;">
+          <label>Select User</label>
+          <div id="analytics-user-select-container"></div>
+      </div>
+
+      <div class="form-group">
+          <label>From</label>
+          <input type="date" id="an-start-date">
+      </div>
+      <div class="form-group">
+          <label>To</label>
+          <input type="date" id="an-end-date">
+      </div>
+
+      <div class="form-group" style="display: flex; gap: 10px;">
+        <button type="button" class="btn-primary" onclick="loadAnalyticsData()">Generate Report</button>
+        <button type="button" class="export-btn" onclick="downloadPayrollReport()">📥 Export CSV</button>
+      </div>
+  </div>
+
+  <div id="analytics-status" class="status-message"></div>
+
+  <hr class="section-divider">
+
+  <div id="command-center-stats" style="margin-bottom:30px;">
+      <div class="metric-card">
+          <span class="metric-title">Adherence</span>
+          <span class="metric-value" id="an-stat-adherence">--%</span>
+      </div>
+      <div class="metric-card">
+          <span class="metric-title">Shrinkage</span>
+          <span class="metric-value" id="an-stat-shrinkage">--%</span>
+      </div>
+      <div class="metric-card">
+          <span class="metric-title">Total Lateness</span>
+          <span class="metric-value" id="an-stat-lateness">0m</span>
+      </div>
+      <div class="metric-card">
+          <span class="metric-title">Worked Hours</span>
+          <span class="metric-value" id="an-stat-worked">0h</span>
+      </div>
+  </div>
+
+  <h3 style="margin-bottom:15px;">Activity Timeline (Heatmap)</h3>
+  <div id="analytics-heatmap-container" class="request-list" style="min-height:200px;">
+      <p class="text-color-secondary">Select criteria and click "Generate Report" to view timeline.</p>
+  </div>
+</div>
+        
+      </main> <!-- End #app-content -->
+      
+    </div> <!-- End .app-container -->
+
+    <!-- MODIFIED: Footer is now positioned by CSS/Flexbox -->
+    <footer>
+      <p>KOMPASS (Konecta Operations, Management & Personnel Self-Service) - Created by Fady Bekhet</p>
+    </footer>
+
+
+
+    <script>
+
+      
+      (function() {
+      // Robust Mobile Detection Function
+      function isMobileDevice() {
+        // 1. Check User Agent strings (standard detection)
+        var ua = navigator.userAgent || navigator.vendor || window.opera;
+        var mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+        if (mobileRegex.test(ua)) return true;
+
+        // 2. Check Physical Screen Dimensions 
+        // "Desktop Site" mode fakes window.innerWidth, but rarely fakes window.screen.width.
+        // Most phones have a physical width < 600px (CSS pixels). Tablets < 900px.
+        // We set a cutoff. 1024px is a safe bet for "Desktops/Laptops".
+        if (window.screen.width < 900 || window.screen.height < 600) {
+          return true;
         }
 
-        // 5. We found a missed user!
-        Logger.log(`Found missed user: ${userName} for ${schDateStr}. Logging: ${leaveType}`);
+        // 3. Touch Point Heuristic (Optional but powerful)
+        // If it has touch points AND screen width is somewhat small (e.g. tablet in landscape)
+        // This catches iPads in Desktop Mode.
+        if (navigator.maxTouchPoints > 0 && window.screen.width < 1024) {
+          return true;
+        }
 
-        const row = findOrCreateRow(adherenceSheet, userName, schDateObj, schDateStr);
-        // *** MODIFIED for Request 3: Mark "Present" as "Absent" ***
-        if (leaveType.toLowerCase() === "present") {
-          adherenceSheet.getRange(row, 14).setValue("Absent"); // Set Leave Type to Absent
-          adherenceSheet.getRange(row, 20).setValue("Yes"); // Set Absent flag to Yes (Col T)
-          logsSheet.appendRow([new Date(), userName, schEmail, "Auto-Log Absent", "User was 'Present' but did not punch in."]);
+        return false;
+      }
+
+      // Apply block immediately if detected
+      if (isMobileDevice()) {
+        document.body.classList.add('force-mobile-block');
+      }
+    })();
+
+
+      // --- MODIFIED PHASE 3: Changed const to let for dynamic updates ---
+      let PLANNED_BREAK_SECONDS = 15 * 60; 
+      let PLANNED_LUNCH_SECONDS = 30 * 60;
+      let OT_PRE_THRESHOLD = 300; // Default 5 mins
+      let OT_POST_THRESHOLD = 300; // Default 5 mins
+      let selfUserName = "";
+      let selfRole = "agent"; 
+      let allUsersList = []; 
+      let allAdminsList = []; 
+      let lastHistoryData = null;
+      let chartsLoaded = false; 
+      
+      // NEW: Global state for the custom multiselects (History only)
+      let selectedHistoryUsers = {};
+      let historyUserList = [];
+      
+      // NEW: Global state for Dashboard Hierarchy
+      let managerHierarchy = null; // Stores the full tree structure
+      let currentDashboardSelection = { 
+        emails: [], // The list of emails to query (flattened)
+        name: "None", // Name to display on the button/title
+        isFullHierarchy: false // Whether this selection includes nested reports
+      };
+      
+      // --- NEW/MODIFIED: Dark Mode Functions (Removed direct icon manipulation) ---
+      const DARK_MODE_KEY = 'kap_dark_mode';
+      
+      // New core function called by the checkbox event listener
+      function toggleThemeState() {
+          // Read the current state of the checkbox
+          const toggleInput = document.getElementById('dark-mode-toggle');
+          // Checkbox is already toggled when this event fires
+          const newThemeIsDark = toggleInput.checked; 
+          
+          applyTheme(newThemeIsDark);
+          localStorage.setItem(DARK_MODE_KEY, newThemeIsDark ? 'enabled' : 'disabled');
+      }
+
+      function applyTheme(isDark) {
+        const body = document.body;
+        const toggleInput = document.getElementById('dark-mode-toggle');
+        
+        if (isDark) {
+          body.classList.add('dark-mode');
+          body.setAttribute('data-theme', 'dark');
+          if (toggleInput) toggleInput.checked = true; // Set checkbox state
+          
+          // Invert the refresh icon
+          document.querySelectorAll('#header-refresh-button img, #header-role-request-button img').forEach(img => {
+               img.style.filter = 'invert(100%)';
+          });
+          
         } else {
-          adherenceSheet.getRange(row, 14).setValue(leaveType); // Log Sick, Annual, etc.
-          if (leaveType.toLowerCase() === "absent") {
-            adherenceSheet.getRange(row, 20).setValue("Yes"); // Set Absent flag (Col T)
-          }
-          logsSheet.appendRow([new Date(), userName, schEmail, "Auto-Log Leave", leaveType]);
-        }
+          body.classList.remove('dark-mode');
+          body.setAttribute('data-theme', 'light');
+          if (toggleInput) toggleInput.checked = false; // Set checkbox state
 
-        missedLogs++;
-        adherenceLookup.add(lookupKey); // Add to lookup so we don't process again
-      }
-    } catch (e) {
-      Logger.log(`Skipping schedule row ${i+1}: ${e.message}`);
-    }
-  }
-
-  Logger.log(`dailyLeaveSweeper finished. Logged ${missedLogs} missed users.`);
-}
-
-// ================= LEAVE REQUEST FUNCTIONS =================
-
-// (Helper - No Change)
-function convertDateToString(dateObj) {
-  if (dateObj instanceof Date && !isNaN(dateObj)) {
-    return dateObj.toISOString(); // "2025-11-06T18:30:00.000Z"
-  }
-  return null; // Return null if it's not a valid date
-}
-
-// (No Change)
-function getMyRequests(userEmail) {
-  const ss = getSpreadsheet();
-  const reqSheet = getOrCreateSheet(ss, SHEET_NAMES.leaveRequests);
-  const allData = reqSheet.getDataRange().getValues();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const userData = getUserDataFromDb(dbSheet);
-  
-  const myRequests = [];
-  
-  // Loop backwards (newest first)
-  for (let i = allData.length - 1; i > 0; i--) { 
-    const row = allData[i];
-    if (String(row[2] || "").trim().toLowerCase() === userEmail) {
-      try { 
-        const startDate = new Date(row[5]);
-        const endDate = new Date(row[6]);
-        // Parse numeric ID part if possible, else use today
-        const requestedDateNum = row[0].includes('_') ? Number(row[0].split('_')[1]) : new Date().getTime();
-
-        const currentApproverEmail = row[11]; // Col L
-        const approverName = userData.emailToName[currentApproverEmail] || currentApproverEmail || "Pending Assignment";
-
-        myRequests.push({
-          requestID: row[0],
-          status: row[1],
-          leaveType: row[4],
-          startDate: convertDateToString(startDate),
-          endDate: convertDateToString(endDate),
-          totalDays: row[7],
-          reason: row[8],
-          requestedDate: convertDateToString(new Date(requestedDateNum)),
-          supervisorName: approverName, // Shows who is holding the request
-          actionDate: convertDateToString(new Date(row[9])),
-          actionBy: userData.emailToName[row[10]] || row[10],
-          actionByReason: row[12] || "",
-          sickNoteUrl: row[13] || ""
-        });
-      } catch (e) {
-        Logger.log("Error parsing row " + i);
-      }
-    }
-  }
-  return myRequests;
-}
-
-function getAdminLeaveRequests(adminEmail, filter) {
-  const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const userData = getUserDataFromDb(dbSheet);
-  const adminRole = userData.emailToRole[adminEmail] || 'agent';
-
-  if (adminRole !== 'admin' && adminRole !== 'superadmin') return { error: "Permission Denied." };
-
-  const reqSheet = getOrCreateSheet(ss, SHEET_NAMES.leaveRequests);
-  const allData = reqSheet.getDataRange().getValues();
-  const results = [];
-  const filterStatus = filter.status.toLowerCase();
-  const filterUser = filter.userEmail;
-
-  // Get subordinates for visibility check
-  const mySubordinateEmails = new Set(webGetAllSubordinateEmails(adminEmail));
-
-  for (let i = 1; i < allData.length; i++) { 
-    const row = allData[i];
-    if (!row[0]) continue;
-
-    const requestStatus = (row[1] || "").toString().trim().toLowerCase();
-    const requesterEmail = (row[2] || "").toString().trim().toLowerCase();
-    const assignedApprover = (row[11] || "").toString().trim().toLowerCase(); 
-    
-    // 1. Filter by Status
-    if (filterStatus !== 'all' && !requestStatus.includes(filterStatus)) continue;
-
-    // 2. Filter by User
-    if (filterUser && filterUser !== 'ALL_USERS' && filterUser !== 'ALL_SUBORDINATES' && requesterEmail !== filterUser) continue;
-
-    // 3. Visibility Logic
-    let isVisible = false;
-    if (adminRole === 'superadmin') {
-      isVisible = true;
-    } else {
-      // Show if assigned to me OR if I am the direct manager/project manager (historical visibility)
-      // Note: We check the SNAPSHOT columns (O=14, P=15) if available, else standard check
-      const directMgrSnapshot = (row[14] || "").toString().toLowerCase();
-      const projectMgrSnapshot = (row[15] || "").toString().toLowerCase();
-
-      if (assignedApprover === adminEmail) isVisible = true;
-      else if (directMgrSnapshot === adminEmail) isVisible = true;
-      else if (projectMgrSnapshot === adminEmail) isVisible = true;
-      else if (mySubordinateEmails.has(requesterEmail)) isVisible = true;
-    }
-
-    if (!isVisible) continue;
-
-    try {
-        const startDate = new Date(row[5]);
-        const endDate = new Date(row[6]);
-        const datePart = row[0].split('_')[1];
-        const reqDate = datePart ? new Date(Number(datePart)) : new Date();
-
-        results.push({
-          requestID: row[0],
-          status: row[1],
-          requestedByName: row[3],
-          leaveType: row[4],
-          startDate: convertDateToString(startDate),
-          endDate: convertDateToString(endDate),
-          totalDays: row[7],
-          reason: row[8],
-          requestedDate: convertDateToString(reqDate),
-          supervisorName: userData.emailToName[assignedApprover] || assignedApprover,
-          actionBy: userData.emailToName[row[10]] || row[10],
-          actionByReason: row[12],
-          requesterBalance: userData.emailToBalances[requesterEmail],
-          sickNoteUrl: row[13]
-        });
-    } catch (e) { }
-  }
-  return results;
-}
-
-function submitLeaveRequest(submitterEmail, request, targetUserEmail) {
-  const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const userData = getUserDataFromDb(dbSheet);
-  
-  const requestEmail = (targetUserEmail || submitterEmail).toLowerCase();
-  const requestName = userData.emailToName[requestEmail];
-  
-  if (!requestName) throw new Error(`User account ${requestEmail} not found.`);
-  
-  // 1. Identify Approvers & Validate
-  const directManager = userData.emailToSupervisor[requestEmail];
-  const projectManager = userData.emailToProjectManager[requestEmail];
-
-  // CRITICAL FIX: Stop "NA" by blocking submission if Direct Manager is missing
-  if (!directManager || directManager === "" || directManager === "na") {
-    throw new Error(`Cannot submit request. User ${requestName} does not have a valid Direct Manager assigned in Employees_Core.`);
-  }
-
-  // 2. Determine Workflow
-  let status = "Pending";
-  let assignedApprover = directManager;
-
-  // If Project Manager exists and is different, they approve first
-  if (projectManager && projectManager !== "" && projectManager !== directManager) {
-    status = "Pending Project Mgr";
-    assignedApprover = projectManager;
-  } else {
-    status = "Pending Direct Mgr"; 
-    assignedApprover = directManager;
-  }
-
-  // 3. Balance Check
-  const startDate = new Date(request.startDate + 'T00:00:00');
-  const endDate = request.endDate ? new Date(request.endDate + 'T00:00:00') : startDate;
-  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-  const totalDays = Math.round((endDate.getTime() - startDate.getTime()) / ONE_DAY_MS) + 1;
-  
-  const balanceKey = request.leaveType.toLowerCase(); 
-  const userBalances = userData.emailToBalances[requestEmail];
-  
-  // Safety check for balance existence
-  if (!userBalances || userBalances[balanceKey] === undefined) {
-     throw new Error(`Balance type '${request.leaveType}' not found for user.`);
-  }
-  if (userBalances[balanceKey] < totalDays) {
-    throw new Error(`Insufficient ${request.leaveType} balance. Available: ${userBalances[balanceKey]}, Requested: ${totalDays}.`);
-  }
-
-  // 4. File Upload Logic
-  let sickNoteUrl = "";
-  if (request.fileInfo) {
-    try {
-      const folder = DriveApp.getFolderById(SICK_NOTE_FOLDER_ID);
-      const fileData = Utilities.base64Decode(request.fileInfo.data);
-      const blob = Utilities.newBlob(fileData, request.fileInfo.type, request.fileInfo.name);
-      const newFile = folder.createFile(blob).setName(`${requestName}_${new Date().toISOString()}_${request.fileInfo.name}`);
-      sickNoteUrl = newFile.getUrl();
-    } catch (e) { throw new Error("File upload failed: " + e.message); }
-  }
-  if (balanceKey === 'sick' && !sickNoteUrl) throw new Error("A PDF sick note is mandatory for sick leave.");
-
-  // 5. Save to Sheet (With New Columns)
-  const reqSheet = getOrCreateSheet(ss, SHEET_NAMES.leaveRequests);
-  const requestID = `req_${new Date().getTime()}`;
-  
-  reqSheet.appendRow([
-    requestID,
-    status,
-    requestEmail,
-    requestName,
-    request.leaveType,
-    startDate, 
-    endDate,   
-    totalDays,
-    request.reason,
-    "", // ActionDate
-    "", // ActionBy
-    assignedApprover, // Col L (12): The person who must approve NOW
-    "", // ActionReason
-    sickNoteUrl,
-    directManager, // Col O (15): Snapshot of Direct Mgr
-    projectManager || "" // Col P (16): Snapshot of Project Mgr
-  ]);
-  
-  SpreadsheetApp.flush(); 
-  
-  // Format the approver name for the success message
-  const approverName = userData.emailToName[assignedApprover] || assignedApprover;
-  return `Request submitted successfully. It is now ${status} (${approverName}).`;
-}
-
-function approveDenyRequest(adminEmail, requestID, newStatus, reason) {
-  const ss = getSpreadsheet();
-  // FIX: Use 'employeesCore' explicitly because that is where balances (Annual/Sick/Casual) live.
-  const coreSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore); 
-  const userData = getUserDataFromDb(ss); // Pass 'ss', not a sheet object
-
-  // Security Check
-  const adminRole = userData.emailToRole[adminEmail] || 'agent';
-  if (adminRole === 'agent') throw new Error("Permission denied.");
-
-  const reqSheet = getOrCreateSheet(ss, SHEET_NAMES.leaveRequests); 
-  const allData = reqSheet.getDataRange().getValues();
-  
-  let rowIndex = -1;
-  let requestRow = [];
-  
-  // Find Request
-  for (let i = 1; i < allData.length; i++) { 
-    if (allData[i][0] === requestID) { 
-      rowIndex = i + 1;
-      requestRow = allData[i];
-      break; 
-    }
-  }
-  if (rowIndex === -1) throw new Error("Request ID not found.");
-
-  const currentStatus = requestRow[1]; // Column B
-  const requesterEmail = requestRow[2];
-  
-  // Col O (Index 14) = Direct Manager Snapshot
-  // Col P (Index 15) = Project Manager Snapshot
-  const directManager = requestRow[14]; 
-  const projectManager = requestRow[15]; 
-
-  // 1. Handle Denial (Immediate Stop)
-  if (newStatus === 'Denied') {
-    reqSheet.getRange(rowIndex, 2).setValue("Denied");
-    reqSheet.getRange(rowIndex, 10).setValue(new Date()); // ActionDate
-    reqSheet.getRange(rowIndex, 11).setValue(adminEmail); // ActionBy
-    reqSheet.getRange(rowIndex, 13).setValue(reason || "Denied by " + adminEmail);
-    return "Request denied and closed.";
-  }
-
-  // 2. Handle Approval Logic (Chain: Direct Mgr -> Project Mgr -> Approved)
-  
-  // STEP 1: Direct Manager Approves
-  if (currentStatus === "Pending Direct Mgr") {
-    // Check if there is a Project Manager to forward to.
-    // Logic: If PM exists, is NOT "na", and is DIFFERENT from Direct Mgr, forward it.
-    if (projectManager && projectManager !== "" && projectManager.toLowerCase() !== "na" && projectManager !== directManager) {
-      // Forward to Project Manager
-      reqSheet.getRange(rowIndex, 2).setValue("Pending Project Mgr"); // Update Status
-      reqSheet.getRange(rowIndex, 12).setValue(projectManager);       // Update Assigned Approver (Col L)
-      reqSheet.getRange(rowIndex, 13).setValue(`Direct Mgr (${adminEmail}) Approved. Forwarded to Project Mgr.`);
-      return "Approved by Direct Manager. Forwarded to Project Manager for final approval.";
-    } else {
-      // No Project Manager (or same person), so Finalize immediately
-      return finalizeLeaveApproval(ss, coreSheet, userData, reqSheet, rowIndex, requestRow, adminEmail, reason);
-    }
-  }
-
-  // STEP 2: Project Manager Approves
-  if (currentStatus === "Pending Project Mgr") {
-    return finalizeLeaveApproval(ss, coreSheet, userData, reqSheet, rowIndex, requestRow, adminEmail, reason);
-  }
-
-  // Fallback for "Pending" (Legacy or simple flow)
-  if (currentStatus === "Pending") {
-     return finalizeLeaveApproval(ss, coreSheet, userData, reqSheet, rowIndex, requestRow, adminEmail, reason);
-  }
-
-  throw new Error(`Invalid Request Status for Approval: ${currentStatus}`);
-}
-
-// HELPER: Finalizes the request (Deducts balance, Adds to schedule, Updates status)
-function finalizeLeaveApproval(ss, coreSheet, userData, reqSheet, rowIndex, requestRow, adminEmail, reason) {
-    const requesterEmail = requestRow[2];
-    const leaveType = requestRow[4];
-    const totalDays = requestRow[7];
-    const balanceKey = leaveType.toLowerCase();
-    
-    // 1. Deduct Balance from Employees_Core
-    const userDBRow = userData.emailToRow[requesterEmail];
-    
-    // Column Mapping for Employees_Core (1-based index)
-    // H=8 (Annual), I=9 (Sick), J=10 (Casual)
-    const colMap = { "annual": 8, "sick": 9, "casual": 10 };
-    const balanceCol = colMap[balanceKey];
-    
-    if (balanceCol && userDBRow) {
-      // Ensure we are reading/writing numbers
-      const balanceRange = coreSheet.getRange(userDBRow, balanceCol);
-      const currentBal = parseFloat(balanceRange.getValue()) || 0;
-      balanceRange.setValue(currentBal - totalDays);
-    } else {
-      // If it's a type like "Absent" or "Unpaid", we might not deduct, or log warning.
-      console.warn(`No balance column found for type: ${leaveType}`);
-    }
-
-    // 2. Submit Schedule (Auto-log to Schedule Sheet)
-    const reqName = requestRow[3];
-    // Format dates for the schedule function
-    const reqStartDateStr = Utilities.formatDate(new Date(requestRow[5]), Session.getScriptTimeZone(), "MM/dd/yyyy");
-    const reqEndDateStr = Utilities.formatDate(new Date(requestRow[6]), Session.getScriptTimeZone(), "MM/dd/yyyy");
-    
-    // Call existing schedule function
-    // (Ensure submitScheduleRange is defined in your code.gs)
-    submitScheduleRange(adminEmail, requesterEmail, reqName, reqStartDateStr, reqEndDateStr, "", "", leaveType);
-
-    // 3. Update Request Sheet to "Approved"
-    reqSheet.getRange(rowIndex, 2).setValue("Approved");
-    reqSheet.getRange(rowIndex, 10).setValue(new Date()); // ActionDate
-    reqSheet.getRange(rowIndex, 11).setValue(adminEmail); // ActionBy
-    reqSheet.getRange(rowIndex, 13).setValue(reason || "Final Approval");
-
-    return "Final Approval Granted. Schedule updated and balance deducted.";
-}
-
-// ================= NEW/MODIFIED FUNCTIONS =================
-
-// ================= FIXED HISTORY READER =================
-function getAdherenceRange(adminEmail, userNames, startDateStr, endDateStr) {
-  const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const userData = getUserDataFromDb(dbSheet);
-  const adminRole = userData.emailToRole[adminEmail] || 'agent';
-  const timeZone = Session.getScriptTimeZone();
-  
-  let targetUserNames = [];
-  if (adminRole === 'agent') {
-    const selfName = userData.emailToName[adminEmail];
-    if (!selfName) throw new Error("Your user account was not found.");
-    targetUserNames = [selfName];
-  } else {
-    targetUserNames = userNames;
-  }
-
-  const targetUserSet = new Set(targetUserNames.map(name => name.toLowerCase()));
-  const startDate = new Date(startDateStr);
-  const endDate = new Date(endDateStr);
-  startDate.setHours(0, 0, 0, 0);
-  endDate.setHours(23, 59, 59, 999);
-  
-  const results = [];
-  const scheduleSheet = getOrCreateSheet(ss, SHEET_NAMES.schedule);
-  const scheduleData = scheduleSheet.getDataRange().getValues();
-  const scheduleMap = {}; 
-
-  for (let i = 1; i < scheduleData.length; i++) {
-    const schName = (scheduleData[i][0] || "").toLowerCase();
-    if (targetUserSet.has(schName)) {
-      try {
-        const schDate = parseDate(scheduleData[i][1]);
-        if (schDate >= startDate && schDate <= endDate) {
-          const schDateStr = Utilities.formatDate(schDate, timeZone, "MM/dd/yyyy");
-          const leaveType = scheduleData[i][5] || "Present";
-          scheduleMap[`${schName}:${schDateStr}`] = leaveType;
-        }
-      } catch (e) {}
-    }
-  }
-
-  const adherenceSheet = getOrCreateSheet(ss, SHEET_NAMES.adherence);
-  const adherenceData = adherenceSheet.getDataRange().getValues();
-  const resultsLookup = new Set();
-
-  for (let i = 1; i < adherenceData.length; i++) {
-    const row = adherenceData[i];
-    const rowUser = (row[1] || "").toString().trim().toLowerCase();
-
-    if (targetUserSet.has(rowUser)) {
-      try {
-        const rowDate = new Date(row[0]);
-        if (rowDate >= startDate && rowDate <= endDate) {
-          results.push({
-            date: convertDateToString(row[0]),
-            userName: row[1],
-            login: convertDateToString(row[2]),
-            firstBreakIn: convertDateToString(row[3]),
-            firstBreakOut: convertDateToString(row[4]),
-            lunchIn: convertDateToString(row[5]),
-            lunchOut: convertDateToString(row[6]),
-            lastBreakIn: convertDateToString(row[7]),
-            lastBreakOut: convertDateToString(row[8]),
-            logout: convertDateToString(row[9]),
-            // Fix: Explicitly parse numbers
-            tardy: Number(row[10]) || 0,
-            overtime: Number(row[11]) || 0,
-            earlyLeave: Number(row[12]) || 0,
-            leaveType: row[13] || "Present", // Fallback if missing
-            firstBreakExceed: row[16] || 0,
-            lunchExceed: row[17] || 0,
-            lastBreakExceed: row[18] || 0,
-            breakWindowViolation: row[21] || "No",
-            netLoginHours: row[22] || 0,
-            preShiftOvertime: Number(row[23]) || 0 // Col X (Index 23)
-          });
-          const rDateStr = Utilities.formatDate(rowDate, timeZone, "MM/dd/yyyy");
-          resultsLookup.add(`${rowUser}:${rDateStr}`);
-        }
-      } catch (e) {
-        Logger.log(`Skipping adherence row ${i+1}. Error: ${e.message}`);
-      }
-    }
-  }
-
-  // Fill in missing days
-  let currentDate = new Date(startDate);
-  const oneDayInMs = 24 * 60 * 60 * 1000;
-  
-  while (currentDate <= endDate) {
-    const currentDateStr = Utilities.formatDate(currentDate, timeZone, "MM/dd/yyyy");
-    for (const userName of targetUserNames) {
-      const userNameLower = userName.toLowerCase();
-      const adherenceKey = `${userNameLower}:${currentDateStr}`;
-      
-      if (!resultsLookup.has(adherenceKey)) {
-        const scheduleKey = `${userNameLower}:${currentDateStr}`;
-        const leaveType = scheduleMap[scheduleKey]; 
-        let finalLeaveType = "Day Off";
-        
-        if (leaveType) {
-          finalLeaveType = (leaveType.toLowerCase() === "present") ? "Absent" : leaveType;
-        }
-
-        results.push({
-          date: convertDateToString(currentDate),
-          userName: userName,
-          login: null, firstBreakIn: null, firstBreakOut: null, lunchIn: null,
-          lunchOut: null, lastBreakIn: null, lastBreakOut: null, logout: null,
-          tardy: 0, overtime: 0, earlyLeave: 0,
-          leaveType: finalLeaveType,
-          firstBreakExceed: 0, lunchExceed: 0, lastBreakExceed: 0,
-          preShiftOvertime: 0
-        });
-      }
-    }
-    currentDate.setTime(currentDate.getTime() + oneDayInMs);
-  }
-
-  results.sort((a, b) => {
-    if (a.date < b.date) return -1;
-    if (a.date > b.date) return 1;
-    return a.userName.localeCompare(b.userName);
-  });
-
-  return results;
-}
-
-
-// REPLACE this function
-function getMySchedule(userEmail) {
-  const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const userData = getUserDataFromDb(dbSheet);
-  const userRole = userData.emailToRole[userEmail] || 'agent';
-
-  const targetEmails = new Set();
-  if (userRole === 'agent') {
-    targetEmails.add(userEmail);
-  } else {
-    const subEmails = webGetAllSubordinateEmails(userEmail);
-    subEmails.forEach(email => targetEmails.add(email.toLowerCase()));
-  }
-
-  const scheduleSheet = getOrCreateSheet(ss, SHEET_NAMES.schedule);
-  const scheduleData = scheduleSheet.getDataRange().getValues();
-  const timeZone = Session.getScriptTimeZone();
-  
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  
-  const nextSevenDays = new Date(today);
-  nextSevenDays.setDate(today.getDate() + 7);
-
-  const mySchedule = [];
-  for (let i = 1; i < scheduleData.length; i++) {
-    const row = scheduleData[i];
-    // *** MODIFIED: Read Email from Col G (index 6) ***
-    const schEmail = (row[6] || "").toString().trim().toLowerCase(); 
-    
-    if (targetEmails.has(schEmail)) {
-      try {
-        // *** MODIFIED: Read Date from Col B (index 1) ***
-        const schDate = parseDate(row[1]);
-        if (schDate >= today && schDate < nextSevenDays) { 
-          
-          // *** MODIFIED: Read times/leave from Col C, E, F ***
-          let startTime = row[2]; // Col C
-          let endTime = row[4];   // Col E
-          let leaveType = row[5] || ""; // Col F
-
-          // *** MODIFIED for Request 3: Handle "Day Off" ***
-          if (leaveType === "" && !startTime) {
-            leaveType = "Day Off";
-          } else if (leaveType === "" && startTime) {
-            leaveType = "Present"; // Default if times exist but no type
-          }
-          // *** END MODIFICATION ***
-          
-          if (startTime instanceof Date) {
-            startTime = Utilities.formatDate(startTime, timeZone, "HH:mm");
-          }
-          if (endTime instanceof Date) {
-            endTime = Utilities.formatDate(endTime, timeZone, "HH:mm");
-          }
-          
-          mySchedule.push({
-            userName: userData.emailToName[schEmail] || schEmail,
-            date: convertDateToString(schDate),
-            leaveType: leaveType,
-            startTime: startTime,
-            endTime: endTime
+          // Reset the refresh icon filter
+          document.querySelectorAll('#header-refresh-button img, #header-role-request-button img').forEach(img => {
+               img.style.filter = 'none';
           });
         }
-      } catch(e) {
-        Logger.log(`Skipping schedule row ${i+1}. Invalid date. Error: ${e.message}`);
-      }
-    }
-  }
-  
-  mySchedule.sort((a, b) => {
-    const dateA = new Date(a.date);
-    const dateB = new Date(b.date);
-    if (dateA < dateB) return -1;
-    if (dateA > dateB) return 1;
-    return a.userName.localeCompare(b.userName);
-  });
-  return mySchedule;
-}
-
-
-// (No Change)
-function adjustLeaveBalance(adminEmail, userEmail, leaveType, amount, reason) {
-  const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const userData = getUserDataFromDb(dbSheet);
-  
-  const adminRole = userData.emailToRole[adminEmail] || 'agent';
-  if (adminRole !== 'admin' && adminRole !== 'superadmin') {
-    throw new Error("Permission denied. Only admins can adjust balances.");
-  }
-  
-  const balanceKey = leaveType.toLowerCase();
-  const balanceCol = { annual: 4, sick: 5, casual: 6 }[balanceKey];
-  if (!balanceCol) {
-    throw new Error(`Unknown leave type: ${leaveType}.`);
-  }
-  
-  const userRow = userData.emailToRow[userEmail];
-  const userName = userData.emailToName[userEmail];
-  if (!userRow) {
-    throw new Error(`Could not find user ${userName} in Data Base.`);
-  }
-  
-  const balanceRange = dbSheet.getRange(userRow, balanceCol);
-  const currentBalance = parseFloat(balanceRange.getValue()) || 0;
-  const newBalance = currentBalance + amount;
-  
-  balanceRange.setValue(newBalance);
-  
-  // Log the adjustment
-  const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-  logsSheet.appendRow([
-    new Date(), 
-    userName, 
-    adminEmail, 
-    "Balance Adjustment", 
-    `Admin: ${adminEmail} | User: ${userName} | Type: ${leaveType} | Amount: ${amount} | Reason: ${reason} | Old: ${currentBalance} | New: ${newBalance}`
-  ]);
-  
-  return `Successfully adjusted ${userName}'s ${leaveType} balance from ${currentBalance} to ${newBalance}.`;
-}
-
-// ================= PHASE 9: BULK SCHEDULE IMPORTER =================
-function importScheduleCSV(adminEmail, csvData) {
-  const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const userData = getUserDataFromDb(dbSheet);
-  const adminRole = userData.emailToRole[adminEmail] || 'agent';
-  if (adminRole !== 'admin' && adminRole !== 'superadmin' && adminRole !== 'manager') {
-    throw new Error("Permission denied. Only admins/managers can import schedules.");
-  }
-  
-  const scheduleSheet = getOrCreateSheet(ss, SHEET_NAMES.schedule);
-  const scheduleData = scheduleSheet.getDataRange().getValues();
-  const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-  const timeZone = Session.getScriptTimeZone();
-  
-  // Build map of existing schedules
-  const userScheduleMap = {};
-  for (let i = 1; i < scheduleData.length; i++) {
-    const rowEmail = scheduleData[i][6];
-    const rowDateRaw = scheduleData[i][1]; 
-    if (rowEmail && rowDateRaw) {
-      const email = rowEmail.toLowerCase();
-      if (!userScheduleMap[email]) userScheduleMap[email] = {};
-      const rowDate = new Date(rowDateRaw);
-      const rowDateStr = Utilities.formatDate(rowDate, timeZone, "MM/dd/yyyy");
-      userScheduleMap[email][rowDateStr] = i + 1;
-    }
-  }
-  
-  let daysUpdated = 0;
-  let daysCreated = 0;
-  let errors = 0;
-  let errorLog = [];
-
-  for (const row of csvData) {
-    try {
-      const userName = row.Name;
-      const userEmail = (row['agent email'] || "").toLowerCase();
-      
-      const targetStartDate = parseDate(row.StartDate);
-      let startTime = parseCsvTime(row.ShiftStartTime, timeZone);
-      const targetEndDate = parseDate(row.EndDate);
-      let endTime = parseCsvTime(row.ShiftEndTime, timeZone);
-      
-      // --- PHASE 9: Parse New Break Windows ---
-      let b1s = parseCsvTime(row.Break1Start, timeZone);
-      let b1e = parseCsvTime(row.Break1End, timeZone);
-      let ls = parseCsvTime(row.LunchStart, timeZone);
-      let le = parseCsvTime(row.LunchEnd, timeZone);
-      let b2s = parseCsvTime(row.Break2Start, timeZone);
-      let b2e = parseCsvTime(row.Break2End, timeZone);
-      
-      let leaveType = row.LeaveType || "Present";
-      
-      if (!userName || !userEmail) throw new Error("Missing Name or agent email.");
-      if (!targetStartDate || isNaN(targetStartDate.getTime())) throw new Error(`Invalid StartDate: ${row.StartDate}.`);
-      
-      const startDateStr = Utilities.formatDate(targetStartDate, timeZone, "MM/dd/yyyy");
-
-      if (leaveType.toLowerCase() !== "present") {
-        startTime = ""; endTime = "";
-        b1s = ""; b1e = ""; ls = ""; le = ""; b2s = ""; b2e = "";
+        
+        // Re-draw charts when theme changes to apply new colors
+        // Note: The original code expected Google Charts, but since they were removed
+        // we keep the redraw logic here for completeness, though it's mainly for aesthetics now.
+        if (window.lastDashboardData) {
+            drawDashboard(window.lastDashboardData);
+        }
       }
 
-      let finalEndDate;
-      if (leaveType.toLowerCase() === "present" && targetEndDate && !isNaN(targetEndDate.getTime())) {
-        finalEndDate = targetEndDate;
-      } else {
-        finalEndDate = new Date(targetStartDate);
+      function initializeTheme() {
+        const savedTheme = localStorage.getItem(DARK_MODE_KEY);
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        
+        let initialTheme = prefersDark;
+
+        if (savedTheme === 'enabled') {
+            initialTheme = true;
+        } else if (savedTheme === 'disabled') {
+            initialTheme = false;
+        }
+        
+        // Use a slight delay to ensure the DOM element for the toggle is ready
+        setTimeout(() => {
+            applyTheme(initialTheme);
+            
+            const toggleInput = document.getElementById('dark-mode-toggle');
+            if (toggleInput) {
+                // Attach listener only after the DOM is fully loaded and theme is set
+                toggleInput.addEventListener('change', toggleThemeState);
+            }
+        }, 0); 
       }
-
-      const emailMap = userScheduleMap[userEmail] || {};
       
-      const result = updateOrAddSingleSchedule(
-      scheduleSheet, userScheduleMap, logsSheet,
-      userEmail, userName, 
-      currentDate, 
-      shiftEndDate, 
-      currentDateStr, 
-      startTime, endTime, leaveType, puncherEmail,
-      "", "", "", "", "", "" // <--- Pass empty break windows for manual entry
-    );
-      
-      if (result === "UPDATED") daysUpdated++;
-      if (result === "CREATED") daysCreated++;
-    } catch (e) {
-      errors++;
-      errorLog.push(`Row ${row.Name}/${row.StartDate}: ${e.message}`);
-    }
-  }
-
-  if (errors > 0) {
-    return `Error: Import complete with ${errors} errors. (Created: ${daysCreated}, Updated: ${daysUpdated}). Errors: ${errorLog.join(' | ')}`;
-  }
-  return `Import successful. Records Created: ${daysCreated}, Records Updated: ${daysUpdated}.`;
-}
-
-// ================= PHASE 7: DASHBOARD ANALYTICS =================
-function getDashboardData(adminEmail, userEmails, date) {
-  const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const userData = getUserDataFromDb(dbSheet);
-  const adminRole = userData.emailToRole[adminEmail] || 'agent';
-  if (adminRole !== 'admin' && adminRole !== 'superadmin' && adminRole !== 'manager') {
-    throw new Error("Permission denied.");
-  }
-  
-  const timeZone = Session.getScriptTimeZone();
-  const targetDate = new Date(date);
-  const targetDateStr = Utilities.formatDate(targetDate, timeZone, "MM/dd/yyyy");
-  const targetUserSet = new Set(userEmails.map(e => e.toLowerCase()));
-  
-  const userStatusMap = {};
-  const userMetricsMap = {}; 
-  
-  // WFM Aggregate Counters
-  let countScheduled = 0;
-  let countWorking = 0; // Logged In
-  let countUnavailable = 0; // Absent, Leave, or Scheduled but not logged in yet
-  
-  userEmails.forEach(email => {
-    const lEmail = email.toLowerCase();
-    const name = userData.emailToName[lEmail] || lEmail;
-    userStatusMap[lEmail] = "Day Off"; 
-    userMetricsMap[name] = {
-      name: name, tardy: 0, earlyLeave: 0, overtime: 0,
-      breakExceed: 0, lunchExceed: 0, scheduled: false
-    };
+      // --- Status Message Utility ---
+      function setStatus(id, type, message) {
+        const statusDiv = document.getElementById(id);
+        
+        // Hide all statuses first (removes visible class)
+        document.querySelectorAll('.status-message').forEach(div => {
+            div.classList.remove('visible', 'success', 'error', 'processing');
+        });
+        
+        if (message) {
+            statusDiv.classList.add('visible', type);
+            statusDiv.innerText = message;
+        } else {
+            statusDiv.classList.remove('visible', 'success', 'error', 'processing');
+        }
+      }
+      // *** NEW HELPER FUNCTION to add in <script> tag ***
+      function setAllPunchButtonsDisabled(disabled) {
+        document.querySelectorAll('#buttons button, #other-buttons button').forEach(btn => {
+          btn.disabled = disabled;
+        });
+      }
+      // === TAB SWITCHING FUNCTION ===
+function showTab(tabName) {
+  // Hide all panels
+  document.querySelectorAll('.tab-panel').forEach(panel => {
+    panel.style.display = 'none';
   });
 
-  const scheduledEmails = new Set();
+  // Deactivate all tab buttons
+  document.querySelectorAll('.tab-button').forEach(button => {
+    button.classList.remove('active');
+  });
 
-  // 1. Get Schedule Data & Calculate Capacity Base
-  const scheduleSheet = getOrCreateSheet(ss, SHEET_NAMES.schedule);
-  const scheduleData = scheduleSheet.getDataRange().getValues();
-  for (let i = 1; i < scheduleData.length; i++) {
-    const row = scheduleData[i];
-    const schEmail = (row[6] || "").toLowerCase();
-    if (!targetUserSet.has(schEmail)) continue;
+  // Clear all status messages
+  document.querySelectorAll('.status-message').forEach(div => {
+    div.classList.remove('visible', 'success', 'error', 'processing');
+  });
+
+  // Show the correct panel and activate the correct button
+  const panel = document.getElementById(tabName + '-panel');
+  const button = document.getElementById(tabName + '-tab-button');
+  
+  if (panel) panel.style.display = 'block';
+  if (button) button.classList.add('active');
+
+  // --- LAZY LOAD DROPDOWNS & DATA ---
+  if (allUsersList && allUsersList.length > 0) {
     
-    const schDate = new Date(row[1]);
-    const schDateStr = Utilities.formatDate(schDate, timeZone, "MM/dd/yyyy");
+    if (tabName === 'admin-tools') {
+      populateAdminDropdown(allUsersList, selfUserName, 'manual-punch-user', 'Select User');
+      populateAdminDropdown(allUsersList, selfUserName, 'balance-user-select', 'Select User');
+      populateAdminDropdown(allUsersList, selfUserName, 'admin-leave-user', 'Select User');
+      populateAdminDropdown(allUsersList, selfUserName, 'offboard-user-select', 'Select Employee');
     
-    if (schDateStr === targetDateStr) {
-      const leaveType = (row[5] || "").toString().trim().toLowerCase();
-      const startTime = row[2];
+    } else if (tabName === 'reporting-line') {
+      populateAdminDropdown(allUsersList, selfUserName, 'reporting-line-user', 'Select User to Move');
+      populateAdminDropdown(allUsersList, selfUserName, 'reporting-line-supervisor', 'Select New Supervisor');
+      populateAdminDropdown(allUsersList, selfUserName, 'movement-history-user', 'Select User');
+      loadPendingMovements();
+      document.getElementById('movement-history-list').innerHTML = '<p class="text-color-secondary">Select a user to view their movement history.</p>';
+    
+    } else if (tabName === 'leave-approval') {
+      populateAdminDropdown(allUsersList, selfUserName, 'leave-report-user', 'Filter by User (Optional)');
+      loadLeaveReport();
+    
+    } else if (tabName === 'history-report') {
+      populateAdminDropdown(allUsersList, selfUserName, 'history', 'Select Users');
+      // Ensure container is visible (Fix for "History Report not showing user select")
+      const histContainer = document.getElementById('history-user-select-container');
+      if(histContainer) histContainer.style.display = 'block';
+    
+    } else if (tabName === 'performance') {
+      loadPerformanceTab();
+    
+    } else if (tabName === 'hr-admin') {
+      loadHrAdmin(); // New Phase 7 Function
+    } else if (tabName === 'overtime') {
+    loadOvertimeTab();
+    }  else if (tabName === 'admin-tools') {
+      // ... existing dropdown population ...
+      populateAdminDropdown(allUsersList, selfUserName, 'manual-punch-user', 'Select User');
+      // ... other dropdowns ...
       
-      if (leaveType === "" && !startTime) {
-        userStatusMap[schEmail] = "Day Off";
-      } else if (leaveType === "present" || (leaveType === "" && startTime)) {
-        scheduledEmails.add(schEmail);
-        userStatusMap[schEmail] = "Pending Login";
-        
-        // Mark metric object as scheduled
-        const name = userData.emailToName[schEmail];
-        if (userMetricsMap[name]) userMetricsMap[name].scheduled = true;
-        
-        countScheduled++;
-        countUnavailable++; // Assume unavailable until we find a punch
-      } else if (leaveType === "absent") {
-        userStatusMap[schEmail] = "Absent";
-        countScheduled++; // Absent counts as scheduled but lost
-        countUnavailable++;
-      } else {
-        userStatusMap[schEmail] = "On Leave";
-        // Leave usually implies scheduled hours that are now non-productive
-        countScheduled++;
-        countUnavailable++;
-      }
+      // NEW: Load Break Config
+      loadBreakConfig();
+    
+    } else if (tabName === 'finance-admin') {
+      // NEW: Initialize the User Multi-Select for Finance
+      populateAdminDropdown(allUsersList, selfUserName, 'finance-apply', 'Select Target Users');
+      loadEntitlementTemplates();
     }
   }
-  
-  // 2. Get Adherence & Status
-  const adherenceSheet = getOrCreateSheet(ss, SHEET_NAMES.adherence);
-  const adherenceData = adherenceSheet.getDataRange().getValues();
-  
-  // Pre-fetch other codes for status refinement
-  const otherCodesSheet = getOrCreateSheet(ss, SHEET_NAMES.otherCodes);
-  const otherCodesData = otherCodesSheet.getDataRange().getValues();
-  const userLastOtherCode = {};
-  
-  for (let i = otherCodesData.length - 1; i > 0; i--) { 
-    const row = otherCodesData[i];
-    const rowDate = new Date(row[0]);
-    const rowShiftDate = getShiftDate(rowDate, SHIFT_CUTOFF_HOUR);
-    if (Utilities.formatDate(rowShiftDate, timeZone, "MM/dd/yyyy") === targetDateStr) {
-      const uName = row[1];
-      const uEmail = userData.nameToEmail[uName];
-      if (uEmail && targetUserSet.has(uEmail.toLowerCase())) {
-        if (!userLastOtherCode[uEmail.toLowerCase()]) { 
-          const [code, type] = (row[2] || "").split(" ");
-          userLastOtherCode[uEmail.toLowerCase()] = { code: code, type: type };
-        }
-      }
-    }
-  }
-  
-  let totalDeviationSeconds = 0;
 
-  for (let i = 1; i < adherenceData.length; i++) {
-    const row = adherenceData[i];
-    const rowDate = new Date(row[0]);
-    if (Utilities.formatDate(rowDate, timeZone, "MM/dd/yyyy") === targetDateStr) { 
-      const userName = row[1];
-      const userEmail = userData.nameToEmail[userName];
-      
-      if (userEmail && targetUserSet.has(userEmail.toLowerCase())) {
-        const lEmail = userEmail.toLowerCase();
+  // Refresh specific tab data
+  if (tabName === 'leave-request') {
+    loadMyRequests();
+    google.script.run.withSuccessHandler(user => {
+      if (user && user.myBalances) populateMyBalances(user.myBalances);
+    }).getUserInfo();
+  } else if (tabName === 'my-schedule') {
+    loadMySchedule();
+  } else if (tabName === 'dashboard') {
+    loadManagerHierarchy();
+    if (window.lastDashboardData) drawDashboard(window.lastDashboardData);
+  } else if (tabName === 'coaching') {
+    loadMyCoaching();
+  } else if (tabName === 'profile') {
+    loadMyProfile();
+  } else if (tabName === 'registration-admin') {
+    loadRegistrationAdmin();
+  } else if (tabName === 'announcements-admin') {
+    loadAnnouncements_Admin();
+  } else if (tabName === 'recruitment') {
+    loadRecruitmentAdmin();
+  }else if (tabName === 'offboarding') {
+       loadOffboardingTab();
+     } else if (tabName === 'analytics') {
+    loadAnalyticsTab();
+  }
+}      
+      // --- Refresh User Info ---
+      function refreshCurrentData() {
+        const btn = document.getElementById('header-refresh-button');
+        btn.classList.add('loading');
         
-        // Status Logic
-        if (scheduledEmails.has(lEmail)) {
-          const login = row[2], b1_in = row[3], b1_out = row[4], l_in = row[5],
-                l_out = row[6], b2_in = row[7], b2_out = row[8], logout = row[9];
-          
-          let agentStatus = "Pending Login";
-          
-          if (login && !logout) {
-            agentStatus = "Logged In";
+        const activeTab = document.querySelector('.tab-button.active');
+        const activeTabName = activeTab ? activeTab.id.replace('-tab-button', '') : 'punch';
+        
+        google.script.run
+          .withSuccessHandler(user => {
+            populateUserInfo(user); 
             
-            // Check sub-status
-            const lastOther = userLastOtherCode[lEmail];
-            let onBreak = false;
-            
-            if (lastOther && lastOther.type === 'In') {
-              agentStatus = `On ${lastOther.code}`;
-              onBreak = true;
-            } else {
-              if (b1_in && !b1_out) { agentStatus = "On First Break"; onBreak = true; }
-              if (l_in && !l_out) { agentStatus = "On Lunch"; onBreak = true; }
-              if (b2_in && !b2_out) { agentStatus = "On Last Break"; onBreak = true; }
+            // Now, reload the data for the specific tab
+            if (activeTabName === 'leave-approval') {
+              const currentFilter = document.getElementById('filter-mine').classList.contains('active') ? 'mine' : 'all';
+              loadPendingRequests(currentFilter);
+            } else if (activeTabName === 'leave-request') {
+              loadMyRequests();
+            } else if (activeTabName === 'my-schedule') {
+              loadMySchedule();
+            } else if (activeTabName === 'dashboard') {
+              loadManagerHierarchy();
+              loadDashboard();
+            } else if (activeTabName === 'history-report' && lastHistoryData) {
+              loadHistoryReport(); 
+            } else if (activeTabName === 'coaching') {
+              loadMyCoaching(); // <-- Use the new function name
             }
             
-            if (!onBreak) {
-               // They are truly working
-               countWorking++;
-               countUnavailable--; // They were counted as unavailable initially
-            }
-          } else if (login && logout) {
-            agentStatus = "Logged Out";
-          }
-          userStatusMap[lEmail] = agentStatus;
-          scheduledEmails.delete(lEmail); // Remove from set so we don't process again
-        }
-        
-        // Metrics Summation
-        // Metrics Summation (Ensuring Pre-Shift OT is added)
-        const tardy = parseFloat(row[10]) || 0;
-        const overtime = parseFloat(row[11]) || 0; // Post-Shift
-        const earlyLeave = parseFloat(row[12]) || 0;
-        const breakExceed = (parseFloat(row[16]) || 0) + (parseFloat(row[18]) || 0);
-        const lunchExceed = parseFloat(row[17]) || 0;
-        const preShiftOT = parseFloat(row[23]) || 0; // Col X (Index 23)
-
-        // Sum deviation for Schedule Adherence
-        totalDeviationSeconds += (tardy + earlyLeave + breakExceed + lunchExceed);
-
-        if (userMetricsMap[userName]) {
-          userMetricsMap[userName].tardy += tardy;
-          userMetricsMap[userName].earlyLeave += earlyLeave;
-          userMetricsMap[userName].overtime += (overtime + preShiftOT); // Combined OT
-          userMetricsMap[userName].breakExceed += breakExceed;
-          userMetricsMap[userName].lunchExceed += lunchExceed;
-        }
+            setTimeout(() => {
+              btn.classList.remove('loading');
+            }, 500); 
+          })
+          .withFailureHandler(err => {
+            btn.classList.remove('loading');
+            const infoDiv = document.getElementById('agent-info');
+            infoDiv.innerHTML = "Error refreshing data. Please try again.";
+            infoDiv.classList.add('error');
+          })
+          .getUserInfo();
       }
-    }
+
+function populateUserInfo(user) {
+  const infoDiv = document.getElementById('agent-info');
+  if (!user || !user.name) {
+    infoDiv.innerHTML = "Your email is not registered.";
+    infoDiv.className = 'error'; 
+    return;
   }
-  
-  // 3. Get Pending Requests (Same as before)
-  const reqSheet = getOrCreateSheet(ss, SHEET_NAMES.leaveRequests);
-  const reqData = reqSheet.getDataRange().getValues();
-  const pendingRequests = [];
-  for (let i = 1; i < reqData.length; i++) {
-    const row = reqData[i];
-    const reqEmail = (row[2] || "").toLowerCase();
-    if (row[1] && row[1].toString().toLowerCase().includes('pending') && targetUserSet.has(reqEmail)) {
-      pendingRequests.push({ name: row[3], type: row[4], startDate: convertDateToString(new Date(row[5])), days: row[7] });
-    }
-  }
-  
-  // 4. Calculate Final WFM Metrics
-  // Assumption: Avg shift is 9 hours (32400 sec) for calculation
-  const ESTIMATED_SHIFT_SECONDS = 32400; 
-  const totalScheduledSeconds = countScheduled * ESTIMATED_SHIFT_SECONDS;
-  
-  let adherencePct = 100;
-  if (totalScheduledSeconds > 0) {
-    adherencePct = Math.max(0, 100 - ((totalDeviationSeconds / totalScheduledSeconds) * 100));
-  }
-  
-  let capacityPct = 0;
-  if (countScheduled > 0) {
-    capacityPct = (countWorking / countScheduled) * 100;
-  }
-  
-  let shrinkagePct = 0;
-  if (countScheduled > 0) {
-    // Shrinkage = Agents unavailable / Total Scheduled
-    shrinkagePct = (countUnavailable / countScheduled) * 100;
+  // --- NEW PHASE 3: Update Break Rules from Backend ---
+  if (user.breakRules) {
+    PLANNED_BREAK_SECONDS = user.breakRules.break1; 
+    PLANNED_LUNCH_SECONDS = user.breakRules.lunch;
+    OT_PRE_THRESHOLD = user.breakRules.otPre;
+    OT_POST_THRESHOLD = user.breakRules.otPost;
+    console.log(`Rules Loaded: Break=${PLANNED_BREAK_SECONDS}s, Lunch=${PLANNED_LUNCH_SECONDS}s, OT_Pre=${OT_PRE_THRESHOLD}s, OT_Post=${OT_POST_THRESHOLD}s`);
   }
 
-  const agentStatusList = [];
-  for (const email of targetUserSet) {
-      const name = userData.emailToName[email] || email;
-      const status = userStatusMap[email] || "Day Off";
-      agentStatusList.push({ name: name, status: status });
-  }
-  agentStatusList.sort((a, b) => a.name.localeCompare(b.name));
+  selfUserName = user.name; 
+  selfRole = user.role; 
+  allUsersList = user.allUsers; 
+  allAdminsList = user.allAdmins; 
   
-  const individualAdherenceMetrics = Object.values(userMetricsMap);
+  document.body.setAttribute('data-role', user.role);
+  
+  if (user.accountStatus === 'Pending') {
+    infoDiv.innerHTML = `<strong>Status:</strong> Pending Approval`;
+    document.getElementById('app-sidebar').style.display = 'none';
+    document.getElementById('punch-panel').innerHTML = `<h2>Pending</h2><p>Please wait for approval.</p>`;
+    if (user.isNewUser) showSupervisorModal(allAdminsList);
+    else loadMyRegistrationStatus();
+    return;
+  }
 
-  return {
-    wfmMetrics: {
-      adherence: adherencePct.toFixed(1),
-      capacity: capacityPct.toFixed(1),
-      shrinkage: shrinkagePct.toFixed(1),
-      working: countWorking,
-      scheduled: countScheduled,
-      unavailable: countUnavailable
-    },
-    agentStatusList: agentStatusList,
-    individualAdherenceMetrics: individualAdherenceMetrics,
-    pendingRequests: pendingRequests
+  infoDiv.innerHTML = `<strong>User:</strong> ${user.name} | <strong>Role:</strong> ${user.role}`;
+  infoDiv.className = '';
+  
+  document.getElementById('buttons').style.display = 'block';
+  document.getElementById('other-buttons').style.display = 'block';
+
+  // --- PERMISSIONS LOGIC ---
+  const can = (perm) => user.permissions && user.permissions.includes(perm);
+
+  const setDisplay = (id, condition) => {
+      const el = document.getElementById(id);
+      if(el) el.style.display = condition ? 'inline-block' : 'none';
   };
-}
 
-// --- NEW: "My Team" Helper Functions ---
-function saveMyTeam(adminEmail, userEmails) {
-  try {
-    // Uses Google Apps Script's built-in User Properties for saving user-specific settings.
-    const userProperties = PropertiesService.getUserProperties();
-    userProperties.setProperty('myTeam', JSON.stringify(userEmails));
-    return "Successfully saved 'My Team' preference.";
-  } catch (e) {
-    throw new Error("Failed to save team preferences: " + e.message);
-  }
-}
-
-function getMyTeam(adminEmail) {
-  try {
-    const userProperties = PropertiesService.getUserProperties();
-    // Getting properties implicitly forces the Google auth dialog if needed.
-    const properties = userProperties.getProperties(); 
-    const myTeam = properties['myTeam'];
-    return myTeam ? JSON.parse(myTeam) : [];
-  } catch (e) {
-    Logger.log("Failed to load team preferences: " + e.message);
-    // Throwing an error here would break the dashboard's initial load. 
-    // We return an empty array instead, and let the front-end handle the fallback.
-   return [];
-  }
-}
-
-// --- NEW: Reporting Line Function ---
-function updateReportingLine(adminEmail, userEmail, newSupervisorEmail) {
-  const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const userData = getUserDataFromDb(dbSheet);
+  // 1. Agent Tools
+  setDisplay('my-schedule-tab-button', true);
+  setDisplay('history-report-tab-button', true);
+  setDisplay('coaching-tab-button', true);
+  setDisplay('overtime-tab-button', true); 
   
-  const adminRole = userData.emailToRole[adminEmail] || 'agent';
-  if (adminRole !== 'admin' && adminRole !== 'superadmin') {
-    throw new Error("Permission denied. Only admins can change reporting lines.");
+  // 2. Management Tools
+  setDisplay('dashboard-tab-button', can('VIEW_FULL_DASHBOARD'));
+  setDisplay('leave-approval-tab-button', can('APPROVE_LEAVE'));
+  setDisplay('reporting-line-tab-button', can('MANAGE_HIERARCHY'));
+
+  // 3. Admin Tools
+  setDisplay('finance-admin-tab-button', can('MANAGE_FINANCE'));
+  setDisplay('schedule-tab-button', can('EDIT_SCHEDULE'));
+  setDisplay('project-admin-tab-button', can('MANAGE_PROJECTS'));
+  setDisplay('admin-tools-tab-button', can('MANAGE_BALANCES') || can('PUNCH_OTHERS'));
+  setDisplay('coaching-admin-tab-button', can('MANAGE_TEMPLATES'));
+  setDisplay('registration-admin-tab-button', can('HIRE_EMPLOYEE'));
+  setDisplay('announcements-admin-tab-button', can('MANAGE_ANNOUNCEMENTS'));
+  setDisplay('recruitment-tab-button', can('MANAGE_RECRUITMENT'));
+  
+  // 4. HR Admin
+  setDisplay('hr-admin-tab-button', can('OFFBOARD_EMPLOYEE')); 
+  
+  // Specific Logic for Panels
+  if (can('PUNCH_OTHERS')) {
+      document.getElementById('admin-panel').style.display = 'block';
+      // *** FIX: Set default value to user.email so it selects them automatically ***
+      populateAdminDropdown(allUsersList, selfUserName, 'agent-select', 'Select User', user.email);
   }
   
-  const userName = userData.emailToName[userEmail];
-  const newSupervisorName = userData.emailToName[newSupervisorEmail];
-  if (!userName) throw new Error(`Could not find user: ${userEmail}`);
-  if (!newSupervisorName) throw new Error(`Could not find new supervisor: ${newSupervisorEmail}`);
-
-  const userRow = userData.emailToRow[userEmail];
-  const currentUserSupervisor = userData.emailToSupervisor[userEmail];
-
-  // Check for auto-approval
-  let canAutoApprove = false;
-  if (adminRole === 'superadmin') {
-    canAutoApprove = true;
-  } else if (adminRole === 'admin') {
-    // Check if both the user's current supervisor AND the new supervisor report to this admin
-    const currentSupervisorManager = userData.emailToSupervisor[currentUserSupervisor];
-    const newSupervisorManager = userData.emailToSupervisor[newSupervisorEmail];
-    
-    if (currentSupervisorManager === adminEmail && newSupervisorManager === adminEmail) {
-      canAutoApprove = true;
-    }
+  if (can('EDIT_SCHEDULE')) {
+      populateAdminDropdown(allUsersList, selfUserName, 'schedule-agent-select', 'Select a user');
   }
 
-  if (!canAutoApprove) {
-    // This is where we will build Phase 2 (requesting the change)
-    // For now, we will just show a permission error.
-    throw new Error("Permission Denied: You do not have authority to approve this change. (This will become a request in Phase 2).");
-  }
-
-  // --- Auto-Approval Logic ---
-  // Update the SupervisorEmail column (Column G = 7)
-  dbSheet.getRange(userRow, 7).setValue(newSupervisorEmail);
-  
-  // Log the change
-  const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-  logsSheet.appendRow([
-    new Date(), 
-    userName, 
-    adminEmail, 
-    "Reporting Line Change", 
-    `User: ${userName} moved to Supervisor: ${newSupervisorName} by ${adminEmail}`
-  ]);
-  
-  return `${userName} has been successfully reassigned to ${newSupervisorName}.`;
+  if (user.myBalances) populateMyBalances(user.myBalances);
+  if (user.currentStatus) updateCurrentStatus(user.currentStatus);
+  loadMyRequests();
 }
 
-// [START] MODIFICATION 2: Replace _ONE_TIME_FIX_TEMPLATE
-
-
-/**
- * NEW: User submits full registration details + 2 managers.
- * (FIXED: Header-aware mapping to prevent column misalignment)
- */
-function webSubmitFullRegistration(form) {
-  try {
-    const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const userData = getUserDataFromDb(ss);
-    const regSheet = getOrCreateSheet(ss, SHEET_NAMES.pendingRegistrations);
-    
-    let userName = userEmail;
-    const userObj = userData.userList.find(u => u.email === userEmail);
-    if (userObj) userName = userObj.name;
-
-    if (!form.directManager || !form.functionalManager) throw new Error("Both managers are required.");
-    if (!form.address || !form.phone) throw new Error("Address and Phone are required.");
-
-    // Check for existing
-    const data = regSheet.getDataRange().getValues();
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][1] === userEmail && data[i][5] !== 'Rejected' && data[i][5] !== 'Approved') { 
-         throw new Error("You already have a pending registration request.");
-      }
-    }
-
-    const requestID = `REG-${new Date().getTime()}`;
-    const timestamp = new Date();
-
-    // --- DYNAMIC HEADER MAPPING FIX ---
-    const headers = regSheet.getRange(1, 1, 1, regSheet.getLastColumn()).getValues()[0];
-    const newRow = new Array(headers.length).fill(""); // Initialize empty row matching header length
-
-    // Helper to map value to header name
-    const setCol = (headerName, val) => {
-        const idx = headers.indexOf(headerName);
-        if (idx > -1) newRow[idx] = val;
-    };
-
-    // Map Data
-    setCol("RequestID", requestID);
-    setCol("UserEmail", userEmail);
-    setCol("UserName", userName);
-    setCol("DirectManagerEmail", form.directManager);
-    setCol("FunctionalManagerEmail", form.functionalManager);
-    setCol("DirectStatus", "Pending");
-    setCol("FunctionalStatus", "Pending");
-    setCol("Address", form.address);
-    setCol("Phone", form.phone);
-    setCol("RequestTimestamp", timestamp);
-    setCol("WorkflowStage", 1); // Explicitly set Stage 1
-    
-    // --- END FIX ---
-
-    regSheet.appendRow(newRow);
-    return "Registration submitted! Waiting for Direct Manager approval.";
-
-  } catch (err) {
-    Logger.log("webSubmitFullRegistration Error: " + err.message);
-    return "Error: " + err.message;
-  }
-}
-
-/**
- * For the pending user to check their own status.
- */
-function webGetMyRegistrationStatus() {
-  try {
-    const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const regSheet = getOrCreateSheet(getSpreadsheet(), SHEET_NAMES.pendingRegistrations);
-    const data = regSheet.getDataRange().getValues();
-
-    for (let i = data.length - 1; i > 0; i--) { // Check newest first
-      if (data[i][1] === userEmail) {
-        return { status: data[i][4], supervisor: data[i][3] }; // Returns { status: "Pending" } or { status: "Denied" }
-      }
-    }
-    return { status: "New" }; // No submission found
-  } catch (e) {
-    return { error: e.message };
-  }
-}
-
-/**
- * NEW: Admins see requests where THEY are the approver.
- * (FIXED: Auto-corrects missing Stage 1 data)
- */
-function webGetPendingRegistrations() {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const userData = getUserDataFromDb(ss);
-    const adminRole = userData.emailToRole[adminEmail] || 'agent';
-    
-    if (adminRole === 'agent') throw new Error("Permission denied.");
-
-    const regSheet = getOrCreateSheet(ss, SHEET_NAMES.pendingRegistrations);
-    const data = regSheet.getDataRange().getValues();
-    const pending = [];
-    const headers = data[0];
-    
-    // Map Indexes
-    const idx = {
-      id: headers.indexOf("RequestID"),
-      email: headers.indexOf("UserEmail"),
-      name: headers.indexOf("UserName"),
-      dm: headers.indexOf("DirectManagerEmail"),
-      fm: headers.indexOf("FunctionalManagerEmail"),
-      dmStat: headers.indexOf("DirectStatus"),
-      fmStat: headers.indexOf("FunctionalStatus"),
-      ts: headers.indexOf("RequestTimestamp"),
-      hDate: headers.indexOf("HiringDate"),
-      stage: headers.indexOf("WorkflowStage")
-    };
-
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      const directMgr = (row[idx.dm] || "").toLowerCase();
-      const funcMgr = (row[idx.fm] || "").toLowerCase();
-      const directStatus = row[idx.dmStat];
-      const funcStatus = row[idx.fmStat];
-      let stage = Number(row[idx.stage] || 0);
-      
-      // --- FIX: INFER STAGE IF MISSING ---
-      if (stage === 0) {
-          if (directStatus === 'Pending') stage = 1;
-          else if (directStatus === 'Approved' && funcStatus === 'Pending') stage = 2;
-      }
-      // -----------------------------------
-
-      const hiringDate = row[idx.hDate] ? convertDateToString(new Date(row[idx.hDate])).split('T')[0] : "";
-
-      let actionRequired = false;
-      let myRoleInRequest = "";
-
-      if (adminRole === 'superadmin') {
-        // Superadmin sees everything active
-        if (stage === 1 || stage === 2) {
-           actionRequired = true;
-           myRoleInRequest = (stage === 1) ? "Direct" : "Functional";
-        }
-      } else {
-        // Sequential Logic
-        // Stage 1: Direct Manager must act
-        if (stage === 1 && directMgr === adminEmail) {
-          actionRequired = true;
-          myRoleInRequest = "Direct";
-        }
-        // Stage 2: Functional/Project Manager must act (only after DM approved)
-        else if (stage === 2 && funcMgr === adminEmail) {
-          actionRequired = true;
-          myRoleInRequest = "Functional";
-        }
-      }
-
-      if (actionRequired) {
-        pending.push({
-          requestID: row[idx.id],
-          userEmail: row[idx.email],
-          userName: row[idx.name],
-          approverRole: myRoleInRequest, 
-          otherStatus: myRoleInRequest === "Direct" ? "Step 1 of 2" : "Step 2: Final Approval",
-          timestamp: convertDateToString(new Date(row[idx.ts])),
-          hiringDate: hiringDate,
-          stage: stage
-        });
-      }
-    }
-
-    return pending.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
-  } catch (e) {
-    return { error: e.message };
-  }
-}
-
-/**
- * NEW: Approves one side of the request. If both approved -> HIRE.
- */
-function webApproveDenyRegistration(requestID, userEmail, supervisorEmail, newStatus, hiringDateStr) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const regSheet = getOrCreateSheet(ss, SHEET_NAMES.pendingRegistrations);
-    const data = regSheet.getDataRange().getValues();
-    const headers = data[0];
-    
-    // Find Indexes
-    const idx = {
-      id: headers.indexOf("RequestID"),
-      dmStat: headers.indexOf("DirectStatus"),
-      fmStat: headers.indexOf("FunctionalStatus"),
-      hDate: headers.indexOf("HiringDate"),
-      stage: headers.indexOf("WorkflowStage")
-    };
-
-    let rowIndex = -1;
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][idx.id] === requestID) {
-        rowIndex = i + 1;
-        break;
-      }
-    }
-    if (rowIndex === -1) throw new Error("Request not found.");
-
-    const row = regSheet.getRange(rowIndex, 1, 1, regSheet.getLastColumn()).getValues()[0];
-    const currentStage = Number(row[idx.stage] || 1);
-
-    // --- DENY LOGIC (Applies to both steps) ---
-    if (newStatus === 'Denied') {
-      regSheet.getRange(rowIndex, idx.dmStat + 1).setValue("Denied");
-      regSheet.getRange(rowIndex, idx.fmStat + 1).setValue("Denied");
-      // Reset stage or set to -1 to indicate closed
-      regSheet.getRange(rowIndex, idx.stage + 1).setValue(-1); 
-      return { success: true, message: "Registration denied and closed." };
-    }
-
-    // --- APPROVAL LOGIC ---
-    
-    // STEP 1: Direct Manager Approval
-    if (currentStage === 1) {
-      if (!hiringDateStr) throw new Error("Direct Manager must provide a Hiring Date.");
-      
-      // Validate Date
-      if (isNaN(new Date(hiringDateStr).getTime())) throw new Error("Invalid Hiring Date.");
-
-      regSheet.getRange(rowIndex, idx.dmStat + 1).setValue("Approved");
-      regSheet.getRange(rowIndex, idx.hDate + 1).setValue(new Date(hiringDateStr)); // Save Date
-      regSheet.getRange(rowIndex, idx.stage + 1).setValue(2); // Move to Stage 2
-      
-      return { success: true, message: "Step 1 Approved. Request forwarded to Project Manager." };
-    }
-
-    // STEP 2: Project Manager Approval
-    if (currentStage === 2) {
-      // Finalize
-      regSheet.getRange(rowIndex, idx.fmStat + 1).setValue("Approved");
-      regSheet.getRange(rowIndex, idx.stage + 1).setValue(3); // Completed
-      
-      // Reuse existing activation logic, ensuring we pass the hiring date from the sheet if not passed explicitly
-      const finalHiringDate = hiringDateStr || row[idx.hDate];
-      return activateUser(ss, row, finalHiringDate);
-    }
-
-    return { success: false, message: "Invalid Workflow State." };
-
-  } catch (e) {
-    Logger.log("webApproveDenyRegistration Error: " + e.message);
-    return { error: e.message };
-  }
-}
-
-// Helper to finalize activation
-function activateUser(ss, regRow, hiringDateStr) {
-  const userEmail = regRow[1];
-  const userName = regRow[2];
-  const directMgr = regRow[3];
-  const funcMgr = regRow[4];
-  const address = regRow[7];
-  const phone = regRow[8];
-
-  // Update Core & PII
-  const coreSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
-
-  // 1. Find user in Core (created during auto-registration in getUserInfo)
-  const coreData = coreSheet.getDataRange().getValues();
-  let coreRow = -1;
-  for(let i=1; i<coreData.length; i++) {
-      if (coreData[i][2] === userEmail) { // Col C is Email
-          coreRow = i + 1;
-          break;
-      }
-  }
-  
-  if (coreRow === -1) throw new Error("User record missing in Core DB.");
-
-  // --- FIX: CHECK AND UPDATE EMPLOYEE ID IF PENDING ---
-  let empID = coreSheet.getRange(coreRow, 1).getValue();
-  
-  if (String(empID).includes("PENDING")) {
-    const newEmpID = generateNextEmpID(coreSheet);
-    coreSheet.getRange(coreRow, 1).setValue(newEmpID); // Update ID in Core
-    empID = newEmpID; // Use new ID for subsequent steps
-    Logger.log(`Updated user ${userName} from PENDING ID to ${newEmpID}`);
-  }
-  // ----------------------------------------------------
-
-  // Update Core: Status, Managers
-  coreSheet.getRange(coreRow, 5).setValue("Active"); // Status
-  coreSheet.getRange(coreRow, 6).setValue(directMgr);
-  coreSheet.getRange(coreRow, 7).setValue(funcMgr);
-
-  // Update PII: Address, Phone, Hiring Date
-  const piiData = piiSheet.getDataRange().getValues();
-  let piiRow = -1;
-  for(let i=1; i<piiData.length; i++) {
-      if (piiData[i][0] === empID) {
-          piiRow = i + 1;
-          break;
-      }
-  }
-  
-  // If PII row doesn't exist, create it with the PERMANENT ID
-  if (piiRow === -1) {
-      piiSheet.appendRow([
-        empID, 
-        new Date(hiringDateStr), 
-        "", "", 
-        address, 
-        phone, 
-        "", ""
-      ]);
-  } else {
-      piiSheet.getRange(piiRow, 2).setValue(new Date(hiringDateStr));
-      piiSheet.getRange(piiRow, 5).setValue(address);
-      piiSheet.getRange(piiRow, 6).setValue(phone);
-  }
-  
-  // Create Folders with PERMANENT ID
-   try {
-      const rootFolders = DriveApp.getFoldersByName("KOMPASS_HR_Files");
-      if (rootFolders.hasNext()) {
-        const root = rootFolders.next();
-        const empFolders = root.getFoldersByName("Employee_Files");
-        if (empFolders.hasNext()) {
-          const parent = empFolders.next();
-          // Folder Name format: Name_KOM-100X
-          const personalFolder = parent.createFolder(`${userName}_${empID}`);
-          personalFolder.createFolder("Payslips");
-          personalFolder.createFolder("Onboarding_Docs");
-          personalFolder.createFolder("Sick_Notes");
-        }
-      }
-    } catch (e) {
-      Logger.log("Folder creation error: " + e.message);
-    }
-
-  return { success: true, message: `User activated with ID ${empID}!` };
-}
-// --- ADD TO THE END OF code.gs ---
-
-// ==========================================================
-// === ANNOUNCEMENTS MODULE ===
-// ==========================================================
-
-/**
- * Fetches only active announcements for all users.
- */
-function webGetAnnouncements() {
-  try {
-    const ss = getSpreadsheet();
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.announcements);
-    const data = sheet.getDataRange().getValues();
-    const announcements = [];
-    
-    // Loop backwards to get newest first
-    for (let i = data.length - 1; i > 0; i--) {
-      const row = data[i];
-      const status = row[2];
-      
-      if (status === 'Active') {
-        announcements.push({
-          id: row[0],
-          content: row[1]
-        });
-      }
-    }
-    return announcements;
-    
-  } catch (e) {
-    Logger.log("webGetAnnouncements Error: " + e.message);
-    return []; // Return empty array on error
-  }
-}
-
-/**
- * Fetches all announcements for the admin panel.
- * Only Superadmins can access this.
- */
-function webGetAnnouncements_Admin() {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-    
-    if (userData.emailToRole[adminEmail] !== 'superadmin') {
-      throw new Error("Permission denied. Only superadmins can manage announcements.");
-    }
-
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.announcements);
-    const data = sheet.getDataRange().getValues();
-    const results = [];
-
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      results.push({
-        id: row[0],
-        content: row[1],
-        status: row[2],
-        createdBy: row[3],
-        timestamp: convertDateToString(new Date(row[4]))
-      });
-    }
-    
-    return results;
-
-  } catch (e) {
-    Logger.log("webGetAnnouncements_Admin Error: " + e.message);
-    return { error: e.message };
-  }
-}
-
-/**
- * Saves (creates or updates) an announcement.
- * Only Superadmins can access this.
- */
-function webSaveAnnouncement(announcementObject) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-    
-    if (userData.emailToRole[adminEmail] !== 'superadmin') {
-      throw new Error("Permission denied. Only superadmins can save announcements.");
-    }
-
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.announcements);
-    const { id, content, status } = announcementObject;
-
-    if (!content) {
-      throw new Error("Content cannot be empty.");
-    }
-
-    if (id) {
-      // --- Update Existing ---
-      const data = sheet.getDataRange().getValues();
-      let rowFound = -1;
-      for (let i = 1; i < data.length; i++) {
-        if (data[i][0] === id) {
-          rowFound = i + 1;
-          break;
-        }
-      }
-      
-      if (rowFound === -1) {
-        throw new Error("Announcement ID not found. Could not update.");
-      }
-      
-      sheet.getRange(rowFound, 2).setValue(content);
-      sheet.getRange(rowFound, 3).setValue(status);
-      
-    } else {
-      // --- Create New ---
-      const newID = `ann-${new Date().getTime()}`;
-      sheet.appendRow([
-        newID,
-        content,
-        status,
-        adminEmail,
-        new Date()
-      ]);
-    }
-    
-    SpreadsheetApp.flush();
-    return { success: true };
-
-  } catch (e) {
-    Logger.log("webSaveAnnouncement Error: " + e.message);
-    return { error: e.message };
-  }
-}
-
-/**
- * Deletes an announcement.
- * Only Superadmins can access this.
- */
-function webDeleteAnnouncement(announcementID) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-    
-    if (userData.emailToRole[adminEmail] !== 'superadmin') {
-      throw new Error("Permission denied. Only superadmins can delete announcements.");
-    }
-
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.announcements);
-    const data = sheet.getDataRange().getValues();
-    let rowFound = -1;
-
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][0] === announcementID) {
-        rowFound = i + 1;
-        break;
-      }
-    }
-
-    if (rowFound > -1) {
-      sheet.deleteRow(rowFound);
-      SpreadsheetApp.flush();
-      return { success: true };
-    } else {
-      throw new Error("Announcement not found.");
-    }
-
-  } catch (e) {
-    Logger.log("webDeleteAnnouncement Error: " + e.message);
-    return { error: e.message };
-  }
-}
-
-/**
- * NEW: Logs a request from a user to upgrade their role.
- */
-function webRequestAdminAccess(justification, requestedRole) {
-  try {
-    const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-    
-    const userName = userData.emailToName[userEmail];
-    const currentRole = userData.emailToRole[userEmail] || 'agent';
-
-    if (!userName) {
-      throw new Error("Your user account could not be found.");
-    }
-    if (currentRole === 'superadmin') {
-      throw new Error("You are already a Superadmin.");
-    }
-    if (currentRole === 'admin' && requestedRole === 'admin') {
-      throw new Error("You are already an Admin.");
-    }
-    if (currentRole === 'agent' && requestedRole === 'superadmin') {
-      throw new Error("You must be an Admin to request Superadmin access.");
-    }
-
-    const reqSheet = getOrCreateSheet(ss, SHEET_NAMES.roleRequests);
-    const requestID = `ROLE-${new Date().getTime()}`;
-
-    // ...
-reqSheet.appendRow([
-  requestID,
-  userEmail,
-  userName,
-  currentRole,
-  requestedRole,
-  justification,
-  new Date(),
-  "Pending", // *** ADD "Pending" STATUS ***
-  "",        // ActionByEmail
-  ""         // ActionTimestamp
-]);
-
-    return "Your role upgrade request has been submitted for review.";
-
-  } catch (e) {
-    Logger.log("webRequestAdminAccess Error: " + e.message);
-    return "Error: " + e.message;
-  }
-}
-
-/**
- * Fetches pending role requests. Superadmin only.
- */
-function webGetRoleRequests() {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-
-    if (userData.emailToRole[adminEmail] !== 'superadmin') {
-      throw new Error("Permission denied. Only superadmins can view role requests.");
-    }
-
-    const reqSheet = getOrCreateSheet(ss, SHEET_NAMES.roleRequests);
-    const data = reqSheet.getDataRange().getValues();
-    const headers = data[0];
-    const results = [];
-    
-    // Find column indexes
-    const statusIndex = headers.indexOf("Status");
-    const idIndex = headers.indexOf("RequestID");
-    const emailIndex = headers.indexOf("UserEmail");
-    const nameIndex = headers.indexOf("UserName");
-    const currentIndex = headers.indexOf("CurrentRole");
-    const requestedIndex = headers.indexOf("RequestedRole");
-    const justifyIndex = headers.indexOf("Justification");
-    const timeIndex = headers.indexOf("RequestTimestamp");
-
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      if (row[statusIndex] === 'Pending') {
-        results.push({
-          requestID: row[idIndex],
-          userEmail: row[emailIndex],
-          userName: row[nameIndex],
-          currentRole: row[currentIndex],
-          requestedRole: row[requestedIndex],
-          justification: row[justifyIndex],
-          timestamp: convertDateToString(new Date(row[timeIndex]))
-        });
-      }
-    }
-    return results.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)); // Newest first
-  } catch (e) {
-    Logger.log("webGetRoleRequests Error: " + e.message);
-    return { error: e.message };
-  }
-}
-
-/**
- * Approves or denies a role request. Superadmin only.
- */
-function webApproveDenyRoleRequest(requestID, newStatus) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-
-    if (userData.emailToRole[adminEmail] !== 'superadmin') {
-      throw new Error("Permission denied. Only superadmins can action role requests.");
-    }
-
-    const reqSheet = getOrCreateSheet(ss, SHEET_NAMES.roleRequests);
-    const data = reqSheet.getDataRange().getValues();
-    const headers = data[0];
-
-    // Find columns
-    const idIndex = headers.indexOf("RequestID");
-    const statusIndex = headers.indexOf("Status");
-    const emailIndex = headers.indexOf("UserEmail");
-    const requestedIndex = headers.indexOf("RequestedRole");
-    const actionByIndex = headers.indexOf("ActionByEmail");
-    const actionTimeIndex = headers.indexOf("ActionTimestamp");
-    
-    let rowToUpdate = -1;
-    let requestDetails = {};
-
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][idIndex] === requestID) {
-        rowToUpdate = i + 1; // 1-based index
-        requestDetails = {
-          status: data[i][statusIndex],
-          userEmail: data[i][emailIndex],
-          newRole: data[i][requestedIndex]
-        };
-        break;
-      }
-    }
-
-    if (rowToUpdate === -1) throw new Error("Request ID not found.");
-    if (requestDetails.status !== 'Pending') throw new Error(`This request has already been ${requestDetails.status}.`);
-
-    // 1. Update the Role Request sheet
-    reqSheet.getRange(rowToUpdate, statusIndex + 1).setValue(newStatus);
-    reqSheet.getRange(rowToUpdate, actionByIndex + 1).setValue(adminEmail);
-    reqSheet.getRange(rowToUpdate, actionTimeIndex + 1).setValue(new Date());
-
-    // 2. If Approved, update the Data Base
-    if (newStatus === 'Approved') {
-      const userDBRow = userData.emailToRow[requestDetails.userEmail];
-      if (!userDBRow) {
-        throw new Error(`Could not find user ${requestDetails.userEmail} in Data Base to update role.`);
-      }
-      // Find Role column (Column C = 3)
-      dbSheet.getRange(userDBRow, 3).setValue(requestDetails.newRole);
-    }
-    
-    SpreadsheetApp.flush();
-    return { success: true, message: `Request has been ${newStatus}.` };
-  } catch (e) {
-    Logger.log("webApproveDenyRoleRequest Error: " + e.message);
-    return { error: e.message };
-  }
-}
-
-// ADD this new function to the end of your code.gs file
-/**
- * Calculates and adds leave balances monthly based on hiring date.
- * This function should be run on a monthly time-based trigger.
- */
-function monthlyLeaveAccrual() {
-  const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-  const userData = getUserDataFromDb(dbSheet);
-  const today = new Date();
-  
-  Logger.log("Starting monthlyLeaveAccrual trigger...");
-
-  for (const user of userData.userList) {
-    try {
-      const hiringDate = userData.emailToHiringDate[user.email];
-      
-      // Skip if no hiring date or account is not active
-      if (!hiringDate || user.accountStatus !== 'Active') {
-        continue;
-      }
-
-      // Calculate years of service
-      const yearsOfService = (today.getTime() - hiringDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
-      
-      let annualDaysPerYear;
-      if (yearsOfService >= 10) {
-        annualDaysPerYear = 30;
-      } else if (yearsOfService >= 1) {
-        annualDaysPerYear = 21;
-      } else {
-        annualDaysPerYear = 15;
-      }
-
-      const monthlyAccrual = annualDaysPerYear / 12;
-      
-      const userRow = userData.emailToRow[user.email];
-      if (!userRow) continue; // Should not happen, but safe check
-      
-      // Get Annual Balance range (Column D = 4)
-      const balanceRange = dbSheet.getRange(userRow, 4); 
-      const currentBalance = parseFloat(balanceRange.getValue()) || 0;
-      const newBalance = currentBalance + monthlyAccrual;
-      
-      balanceRange.setValue(newBalance);
-      
-      logsSheet.appendRow([
-        new Date(), 
-        user.name, 
-        'SYSTEM', 
-        'Monthly Accrual', 
-        `Added ${monthlyAccrual.toFixed(2)} days (Rate: ${annualDaysPerYear}/yr). New Balance: ${newBalance.toFixed(2)}`
-      ]);
-
-    } catch (e) {
-      Logger.log(`Failed to process accrual for ${user.name}: ${e.message}`);
-    }
-  }
-  Logger.log("Finished monthlyLeaveAccrual trigger.");
-}
-
-/**
- * REPLACED: Robustly parses a date from CSV, handling strings, numbers, and Date objects.
- */
-function parseDate(dateInput) {
-  if (!dateInput) return null;
-  if (dateInput instanceof Date) return dateInput;
-
-  try {
-    // 1. Handle Serial Number (Excel/Sheets style)
-    if (typeof dateInput === 'number' && dateInput > 1) {
-      const baseDate = new Date(Date.UTC(1899, 11, 30));
-      baseDate.setUTCDate(baseDate.getUTCDate() + dateInput);
-      return baseDate;
-    }
-    
-    // 2. Handle String with DD/MM/YYYY (with optional time)
-    if (typeof dateInput === 'string') {
-      // Regex looks for dd/mm/yyyy at the start
-      const match = dateInput.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-      if (match) {
-        const day = parseInt(match[1], 10);
-        const month = parseInt(match[2], 10) - 1; // Months are 0-11
-        const year = parseInt(match[3], 10);
+      function loadUserInfo() { 
+        // 1. Check saved theme
+        initializeTheme();
         
-        // If it has time, try to parse it, otherwise default to 00:00
-        let hours = 0, minutes = 0, seconds = 0;
-        const timeMatch = dateInput.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
-        if (timeMatch) {
-           hours = parseInt(timeMatch[1], 10);
-           minutes = parseInt(timeMatch[2], 10);
-           seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
-        }
-        
-        const newDate = new Date(year, month, day, hours, minutes, seconds);
-        if (!isNaN(newDate.getTime())) return newDate;
+        // 2. Set timeout for failure
+        const loadTimeout = setTimeout(() => {
+          
+          const infoDiv = document.getElementById('agent-info');
+          infoDiv.innerHTML = "The request timed out. Please refresh and re-authorize the script if asked.";
+          infoDiv.classList.add('error', 'visible');
+          infoDiv.style.textAlign = 'center';
+          document.getElementById('app-loader').style.display = 'none';
+        }, 15000);
+
+        // 3. Run script
+        google.script.run
+          .withSuccessHandler(user => { 
+            clearTimeout(loadTimeout); 
+            populateUserInfo(user);
+            loadAnnouncements(); // Load banner for all users on page load
+            document.getElementById('app-loader').style.display = 'none';
+          })
+          .withFailureHandler(err => {
+            clearTimeout(loadTimeout); 
+            const infoDiv = document.getElementById('agent-info');
+            let errorMsg = err.message || JSON.stringify(err);
+            infoDiv.innerHTML = "Could not load user info. Error: " + errorMsg; 
+            infoDiv.classList.add('error', 'visible');
+            document.getElementById('app-loader').style.display = 'none';
+        }).getUserInfo(); 
       }
-    }
-
-    // 3. Fallback to standard parser (ISO format yyyy-mm-dd)
-    const standardDate = new Date(dateInput);
-    if (!isNaN(standardDate.getTime())) return standardDate;
-
-    return null; 
-  } catch(e) {
-    Logger.log("Date Parse Error: " + e.message);
-    return null;
-  }
-}
-
-/**
- * NEW: Robustly parses a time from CSV, handling strings and serial numbers (fractions).
- * Returns a string in HH:mm:ss format.
- */
-function parseCsvTime(timeInput, timeZone) {
-  if (timeInput === null || timeInput === undefined || timeInput === "") return ""; // Allow empty time
-
-  try {
-    // Check if it's a serial number (e.g., 0.5 for 12:00 PM)
-    if (typeof timeInput === 'number' && timeInput >= 0 && timeInput <= 1) { // 1.0 is 24:00, which is 00:00
-      // Handle edge case 1.0 = 00:00:00
-      if (timeInput === 1) return "00:00:00"; 
       
-      const totalSeconds = Math.round(timeInput * 86400);
-      const hours = Math.floor(totalSeconds / 3600);
-      const minutes = Math.floor((totalSeconds % 3600) / 60);
-      const seconds = totalSeconds % 60;
-      
-      const hh = String(hours).padStart(2, '0');
-      const mm = String(minutes).padStart(2, '0');
-      const ss = String(seconds).padStart(2, '0');
-      
-      return `${hh}:${mm}:${ss}`;
-    }
+      // NEW: Function to handle populating custom multi-selects (History)
+      function populateAdminCustomSelect(users, selfName, type) { 
+          // Only used for history now
+          if (type !== 'history') return;
+          
+          const selectedState = selectedHistoryUsers;
+          const dropdownDiv = document.getElementById(`custom-${type}-select-dropdown`);
+          
+          if (!dropdownDiv) return;
 
-    // Check if it's a string (e.g., "12:00" or "12:00:00" or "12:00 PM")
-    if (typeof timeInput === 'string') {
-      // Try parsing as a date (handles "12:00 PM", "12:00", "12:00:00")
-      const dateFromTime = new Date('1970-01-01 ' + timeInput);
-      if (!isNaN(dateFromTime.getTime())) {
-          return Utilities.formatDate(dateFromTime, timeZone, "HH:mm:ss");
+          // Set the global user list state for lookups
+          historyUserList = users;
+          
+          // Reset DOM
+          dropdownDiv.innerHTML = ''; 
+          
+          // Add the "Select All" option
+          let allOption = document.createElement('div');
+          allOption.className = 'dropdown-item';
+          allOption.innerHTML = `<input type="checkbox" id="select-all-checkbox-${type}" onclick="toggleSelectAll('${type}')"> <label for="select-all-checkbox-${type}" style="flex: 1; cursor: pointer;">Select All</label>`;
+          allOption.onclick = (e) => e.stopPropagation(); 
+          dropdownDiv.appendChild(allOption);
+          
+          // Add individual user options
+          users.forEach(user => { 
+            const item = document.createElement('div');
+            item.className = 'dropdown-item';
+            item.setAttribute('data-email', user.email);
+            item.innerHTML = `
+              <input type="checkbox" id="user-checkbox-${type}-${user.email}" data-email="${user.email}">
+              <label for="user-checkbox-${type}-${user.email}" style="flex: 1; cursor: pointer;">${user.name} (${user.email})</label>
+            `;
+            // Pass the item and email to the selection handler
+            item.onclick = (e) => selectUserItem(type, e, item, user.email, user.name);
+            dropdownDiv.appendChild(item);
+          });
+          
+          // Ensure button display reflects initial (empty) state
+          updateSelectButtonDisplay(type);
       }
-    }
-    
-    // Check if it's a full Date object (e.g., from a formatted cell)
-    if (timeInput instanceof Date) {
-      return Utilities.formatDate(timeInput, timeZone, "HH:mm:ss");
-    }
-    
-    return ""; // Could not parse
-  } catch(e) {
-    Logger.log(`parseCsvTime Error for input "${timeInput}": ${e.message}`);
-    return ""; // Return empty on error
-  }
-}
-
-// ==========================================
-// === PHASE 2: EMPLOYEE SELF-SERVICE API ===
-// ==========================================
-
-/**
- * Fetches full profile data (Core + PII) for the logged-in user.
- */
-function webGetMyProfile() {
-  const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-  const ss = getSpreadsheet();
-  const userData = getUserDataFromDb(ss); // This uses your updated Phase 1 logic
-  
-  // Find the user object from the list we already generated
-  const user = userData.userList.find(u => u.email === userEmail);
-  if (!user) throw new Error("User not found.");
-
-  // Now fetch PII data (Phone, Address, IBAN) from the restricted sheet
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
-  const piiData = piiSheet.getDataRange().getValues();
-  
-  let piiRecord = {};
-  
-  // Look for the row with the matching EmployeeID
-  for (let i = 1; i < piiData.length; i++) {
-    if (piiData[i][0] === user.empID) { // Column A is EmployeeID
-      piiRecord = {
-        salary: piiData[i][2],      // Col C
-        iban: piiData[i][3],        // Col D
-        address: piiData[i][4],     // Col E
-        phone: piiData[i][5],       // Col F
-        medical: piiData[i][6],     // Col G
-        contract: piiData[i][7]     // Col H
-      };
-      break;
-    }
-  }
-
-  return {
-    core: user,
-    pii: piiRecord
+      
+      
+// Updated populateAdminDropdown to accept a default value
+function populateAdminDropdown(users, selfName, dropdownId, selfText, defaultVal = null) {
+  // Map Dropdown IDs to their Container IDs
+  const map = {
+    'agent-select': 'agent-select-container',
+    'schedule-agent-select': 'schedule-agent-select-container',
+    'manual-punch-user': 'manual-punch-user-container',
+    'admin-leave-user': 'admin-leave-user-container',
+    'balance-user-select': 'balance-user-select-container',
+    'reporting-line-user': 'reporting-line-user-container',
+    'reporting-line-supervisor': 'reporting-line-supervisor-container',
+    'movement-history-user': 'movement-history-user-container',
+    'coaching-agent-select': 'coaching-agent-select-container',
+    'leave-report-user': 'leave-report-user-container',
+    'perf-employee-select': 'perf-employee-select-container',
+    'offboard-user-select': 'offboard-user-select-container',
+    'hr-balance-user-select': 'hr-balance-user-select-container',
+    'hr-offboard-user-select': 'hr-offboard-user-select-container',
+    'ot-employee-select': 'ot-employee-select-container', // 
+    'offboard-term-user': 'offboard-term-user-container', // 
+    'reporting-line-pm': 'reporting-line-pm-container',
+    'finance-apply': 'fin-apply-users-container',
+    'analytics-user': 'analytics-user-select-container'
   };
-}
 
-/**
- * Updates editable profile fields (Address, Phone).
- * Sensitive fields like IBAN trigger a request (simulated for now).
- */
-function webUpdateProfile(formData) {
-  const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-  const ss = getSpreadsheet();
-  const userData = getUserDataFromDb(ss);
-  const user = userData.userList.find(u => u.email === userEmail);
-  if (!user) throw new Error("User not found.");
-
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
-  const piiData = piiSheet.getDataRange().getValues();
-  
-  let rowToUpdate = -1;
-  for (let i = 1; i < piiData.length; i++) {
-    if (piiData[i][0] === user.empID) {
-      rowToUpdate = i + 1;
-      break;
-    }
-  }
-
-  if (rowToUpdate === -1) throw new Error("PII record not found. Contact HR.");
-
-  // Update Address (Col E -> 5) and Phone (Col F -> 6)
-  if (formData.address) piiSheet.getRange(rowToUpdate, 5).setValue(formData.address);
-  if (formData.phone) piiSheet.getRange(rowToUpdate, 6).setValue(formData.phone);
-
-  // Logic for IBAN change request (For now, we just log it)
-  if (formData.iban && formData.iban !== piiData[rowToUpdate-1][3]) {
-     const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-     logsSheet.appendRow([new Date(), user.name, userEmail, "Profile Change Request", `Requested IBAN change to: ${formData.iban}`]);
-     return "Profile updated. Note: IBAN changes require HR approval and have been logged as a request.";
-  }
-
-  return "Profile updated successfully.";
-}
-
-// 1. Submit a Change Request (Agent)
-function webSubmitDataChangeRequest(field, newValue, reason) {
-  const { userEmail, userName, ss } = getAuthorizedContext(null);
-  const reqSheet = getOrCreateSheet(ss, "Data_Change_Requests");
-  
-  // Get current value for logging (simplified)
-  // In a real scenario, we'd fetch the specific field from PII/Core
-  const oldValue = "Current Value"; 
-
-  const reqID = `CHG-${new Date().getTime()}`;
-  reqSheet.appendRow([
-    reqID,
-    userEmail,
-    userName,
-    field,
-    oldValue,
-    newValue,
-    reason,
-    "Pending",
-    new Date(),
-    "", // ActionBy
-    ""  // ActionDate
-  ]);
-  
-  return "Change request submitted to HR.";
-}
-
-// 2. Get Pending Requests (HR/Admin)
-function webGetDataChangeRequests() {
-  const { userEmail, userData, ss } = getAuthorizedContext('OFFBOARD_EMPLOYEE'); // Reusing HR permission
-  const reqSheet = getOrCreateSheet(ss, "Data_Change_Requests");
-  const data = reqSheet.getDataRange().getValues();
-  const requests = [];
-  
-  for (let i = 1; i < data.length; i++) {
-    // Col H (index 7) is Status
-    if (data[i][7] === 'Pending') {
-      requests.push({
-        id: data[i][0],
-        email: data[i][1],
-        name: data[i][2],
-        field: data[i][3],
-        oldVal: data[i][4],
-        newVal: data[i][5],
-        reason: data[i][6],
-        date: convertDateToString(new Date(data[i][8]))
-      });
-    }
-  }
-  return requests;
-}
-
-// 3. Approve/Deny Request (HR/Admin)
-function webActionDataChangeRequest(reqId, action) {
-  const { userEmail: adminEmail, ss, userData } = getAuthorizedContext('OFFBOARD_EMPLOYEE');
-  const reqSheet = getOrCreateSheet(ss, "Data_Change_Requests");
-  const data = reqSheet.getDataRange().getValues();
-  
-  let rowIndex = -1;
-  let reqData = null;
-  
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === reqId) {
-      rowIndex = i + 1;
-      reqData = {
-        email: data[i][1],
-        field: data[i][3],
-        newValue: data[i][5]
-      };
-      break;
-    }
-  }
-  
-  if (rowIndex === -1) throw new Error("Request not found.");
-  
-  if (action === 'Approved') {
-    // PERFORM THE UPDATE
-    if (reqData.field === 'IBAN' || reqData.field === 'NationalID' || reqData.field === 'Address' || reqData.field === 'Phone') {
-       updateEmployeePIIField(ss, userData, reqData.email, reqData.field, reqData.newValue);
-    } else {
-       // Handle Core fields if necessary
-    }
-  }
-  
-  // Update Request Status
-  reqSheet.getRange(rowIndex, 8).setValue(action); // Status
-  reqSheet.getRange(rowIndex, 10).setValue(adminEmail); // ActionBy
-  reqSheet.getRange(rowIndex, 11).setValue(new Date()); // ActionDate
-  
-  return `Request ${action}.`;
-}
-
-// Helper to update PII Sheet
-function updateEmployeePIIField(ss, userData, targetEmail, fieldName, newValue) {
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
-  const piiData = piiSheet.getDataRange().getValues();
-  const headers = piiData[0];
-  const colIndex = headers.indexOf(fieldName); // e.g. "IBAN"
-  
-  if (colIndex === -1) throw new Error(`Field ${fieldName} not found in PII sheet.`);
-  
-  const empID = userData.userList.find(u => u.email === targetEmail)?.empID;
-  if (!empID) throw new Error("User ID not found.");
-  
-  for (let i = 1; i < piiData.length; i++) {
-    if (piiData[i][0] === empID) {
-      piiSheet.getRange(i + 1, colIndex + 1).setValue(newValue);
+  if (dropdownId === 'analytics-user') {
+      renderGlobalUserSelector('analytics-user-select-container', users, 'Select Users', true, (vals) => {
+          // Store selected array as JSON string in the dataset
+          const container = document.getElementById('analytics-user-select-container');
+          if(container) container.dataset.value = JSON.stringify(vals);
+      }, defaultVal); // Pass defaultVal (which we will set to all emails)
       return;
-    }
   }
-  throw new Error("PII Record not found for user.");
-}
 
-/**
- * Scans the user's specific Drive folder for documents.
- */
-function webGetMyDocuments() {
-  const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-  const ss = getSpreadsheet();
-  const userData = getUserDataFromDb(ss);
-  const user = userData.userList.find(u => u.email === userEmail);
-  
-  if (!user || !user.empID) return [];
-
-  // 1. Find the root folder
-  const rootFolders = DriveApp.getFoldersByName("KOMPASS_HR_Files");
-  if (!rootFolders.hasNext()) return [];
-  const root = rootFolders.next();
-  
-  const empFolders = root.getFoldersByName("Employee_Files");
-  if (!empFolders.hasNext()) return [];
-  const parentFolder = empFolders.next();
-
-  // 2. Find the specific user folder: "[Name]_[ID]"
-  const searchName = `${user.name}_${user.empID}`;
-  const userFolders = parentFolder.getFoldersByName(searchName);
-  
-  if (!userFolders.hasNext()) return [];
-  const myFolder = userFolders.next();
-
-  // 3. Recursive function to get all files
-  let fileList = [];
-  
-  function scanFolder(folder, path) {
-    const files = folder.getFiles();
-    while (files.hasNext()) {
-      const f = files.next();
-      fileList.push({
-        name: f.getName(),
-        url: f.getUrl(),
-        type: path, // e.g., "Payslips" or "Root"
-        date: f.getLastUpdated().toISOString()
+  // Special Handling for History (Multi-Select)
+  if (dropdownId === 'history') {
+      renderGlobalUserSelector('history-user-select-wrapper', users, 'Select Users', true, (vals) => {
+          document.getElementById('history-user-select-wrapper').dataset.value = JSON.stringify(vals);
       });
-    }
-    const subFolders = folder.getFolders();
-    while (subFolders.hasNext()) {
-      const sub = subFolders.next();
-      scanFolder(sub, sub.getName());
-    }
-  }
-  
-  scanFolder(myFolder, "General");
-  return fileList;
-}
-
-/**
- * Fetches warnings for the logged-in user.
- */
-function webGetMyWarnings() {
-  const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-  const ss = getSpreadsheet();
-  const userData = getUserDataFromDb(ss);
-  const user = userData.userList.find(u => u.email === userEmail);
-  
-  if (!user) return [];
-
-  const wSheet = getOrCreateSheet(ss, "Warnings"); // Ensure this matches SHEET_NAMES
-  const data = wSheet.getDataRange().getValues();
-  const warnings = [];
-
-  for (let i = 1; i < data.length; i++) {
-    // Col B is EmployeeID
-    if (data[i][1] === user.empID) {
-      warnings.push({
-        type: data[i][2],
-        level: data[i][3],
-        date: convertDateToString(new Date(data[i][4])),
-        description: data[i][5],
-        status: data[i][6]
-      });
-    }
-  }
-  return warnings;
-}
-
-// ==========================================
-// === PHASE 3: PROJECT MANAGEMENT API ===
-// ==========================================
-
-/**
- * Fetches all active projects.
- * Returns a list for dropdowns.
- */
-function webGetProjects() {
-  const ss = getSpreadsheet();
-  const pSheet = getOrCreateSheet(ss, SHEET_NAMES.projects); // Defined in Phase 1
-  const data = pSheet.getDataRange().getValues();
-  
-  const projects = [];
-  // Skip header (row 0)
-  for (let i = 1; i < data.length; i++) {
-    // ProjectID(0), Name(1), Manager(2), Roles(3)
-    if (data[i][0]) {
-      projects.push({
-        id: data[i][0],
-        name: data[i][1],
-        manager: data[i][2]
-      });
-    }
-  }
-  return projects;
-}
-
-/**
- * Admins create/update projects here.
- */
-function webSaveProject(projectData) {
-  const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-  const ss = getSpreadsheet();
-  
-  // Security Check (Admin Only)
-  // You can reuse your existing checkAdmin() helper logic here if you extracted it, 
-  // or just look up the role again.
-  const coreSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
-  const users = coreSheet.getDataRange().getValues();
-  let isAdmin = false;
-  for(let i=1; i<users.length; i++) {
-    if(users[i][2] == userEmail && (users[i][3] == 'admin' || users[i][3] == 'superadmin')) {
-      isAdmin = true; break;
-    }
-  }
-  if (!isAdmin) throw new Error("Permission denied.");
-
-  const pSheet = getOrCreateSheet(ss, SHEET_NAMES.projects);
-  
-  // Generate ID if new
-  const pid = projectData.id || `PRJ-${new Date().getTime()}`;
-  
-  // Check if updating existing
-  const data = pSheet.getDataRange().getValues();
-  let rowToUpdate = -1;
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === pid) {
-      rowToUpdate = i + 1;
-      break;
-    }
+      return;
   }
 
-  if (rowToUpdate > 0) {
-    pSheet.getRange(rowToUpdate, 2).setValue(projectData.name);
-    pSheet.getRange(rowToUpdate, 3).setValue(projectData.manager);
-  } else {
-    pSheet.appendRow([pid, projectData.name, projectData.manager, "All"]);
-  }
+  const containerId = map[dropdownId];
+  if (!containerId) return; 
+
+  let userList = [...users];
   
-  return "Project saved successfully.";
-}
-
-// ==========================================
-// === PHASE 4: RECRUITMENT & HIRING API ===
-// ==========================================
-
-/**
- * 3. SUBMIT APPLICATION (Public) - UPGRADED
- * Now captures National ID, Languages, Referrer, etc.
- */
-function webSubmitApplication(data) {
-  const ss = getSpreadsheet();
-  const sheet = getOrCreateSheet(ss, SHEET_NAMES.recruitment);
-  
-  const id = `CAND-${new Date().getTime()}`;
-  sheet.appendRow([
-    id,
-    data.name,
-    data.email,
-    data.phone,
-    data.position, // This might now be a Requisition ID or Title
-    data.cv,
-    "New",         // Status
-    "Applied",     // Stage
-    "", "", "", "",// Interview Scores/Notes (Placeholders)
-    new Date(),    // Applied Date
-    // --- NEW PHASE 3 COLUMNS ---
-    data.nationalId || "",
-    data.langLevel || "",
-    data.secondLang || "",
-    data.referrer || "",
-    "", "", "", "", // Feedback Columns (HR, Mgmt, Tech, Client)
-    "Pending"       // Offer Status
-  ]);
-  return "Success";
-}
-
-/**
- * ADMIN: Gets candidates from Internal DB AND External Buffer
- */
-function webGetCandidates() {
-  const ss = getSpreadsheet();
-  const internalSheet = getOrCreateSheet(ss, SHEET_NAMES.recruitment);
-  const candidates = [];
-
-  // 1. Fetch Internal Candidates (Historical/Processing)
-  const internalData = internalSheet.getDataRange().getValues();
-  for (let i = 1; i < internalData.length; i++) {
-    candidates.push({
-      id: internalData[i][0],
-      name: internalData[i][1],
-      email: internalData[i][2],
-      position: internalData[i][4],
-      cv: internalData[i][5],
-      status: internalData[i][6],
-      stage: internalData[i][7],
-      date: convertDateToString(new Date(internalData[i][12])),
-      source: 'Internal'
-    });
-  }
-
-  // 2. Fetch New Candidates from External Buffer
-  try {
-    const bufferSs = SpreadsheetApp.openById(BUFFER_SHEET_ID);
-    const bufferSheet = bufferSs.getSheets()[0];
-    const bufferData = bufferSheet.getDataRange().getValues();
-    
-    // Start loop from 1 to skip headers
-    for (let i = 1; i < bufferData.length; i++) {
-      // Buffer Columns: ID(0), Name(1), Email(2), Phone(3), Pos(4), CV(5), Status(6), Date(7)
-      // We only show "New" ones. Processed ones should be moved/deleted.
-      candidates.push({
-        id: bufferData[i][0],
-        name: bufferData[i][1],
-        email: bufferData[i][2],
-        position: bufferData[i][4],
-        cv: bufferData[i][5],
-        status: "New (External)", // Mark as new
-        stage: "Applied",
-        date: convertDateToString(new Date(bufferData[i][7])),
-        source: 'Buffer',
-        phone: bufferData[i][3] // Store for importing
-      });
-    }
-  } catch (e) {
-    Logger.log("Could not read buffer sheet (permissions?): " + e.message);
-  }
-
-  // Sort by newest
-  return candidates.reverse();
-}
-
-/**
- * ADMIN: Updates Candidate. 
- * If source is Buffer, it IMPORTS them to Internal DB first.
- */
-function webUpdateCandidateStatus(candidateId, newStatus, newStage) {
-  const ss = getSpreadsheet();
-  const internalSheet = getOrCreateSheet(ss, SHEET_NAMES.recruitment);
-  
-  // 1. Check if candidate is already Internal
-  const internalData = internalSheet.getDataRange().getValues();
-  for (let i = 1; i < internalData.length; i++) {
-    if (internalData[i][0] === candidateId) {
-      if (newStatus) internalSheet.getRange(i + 1, 7).setValue(newStatus);
-      if (newStage) internalSheet.getRange(i + 1, 8).setValue(newStage);
-      return "Updated";
-    }
-  }
-
-  // 2. If not found, check External Buffer and Import
-  try {
-    const bufferSs = SpreadsheetApp.openById(BUFFER_SHEET_ID);
-    const bufferSheet = bufferSs.getSheets()[0];
-    const bufferData = bufferSheet.getDataRange().getValues();
-    
-    for (let i = 1; i < bufferData.length; i++) {
-      if (bufferData[i][0] === candidateId) {
-        // FOUND in Buffer! Import to Internal.
-        const row = bufferData[i];
-        
-        internalSheet.appendRow([
-          row[0], // ID
-          row[1], // Name
-          row[2], // Email
-          row[3], // Phone
-          row[4], // Position
-          row[5], // CV
-          newStatus || row[6], // New Status
-          newStage || "Applied", // New Stage
-          "", "", "", "", 
-          row[7] // Date
-        ]);
-        
-        // Remove from Buffer to prevent duplicates
-        bufferSheet.deleteRow(i + 1);
-        return "Imported & Updated";
+  // Pass defaultVal to the renderer
+  renderGlobalUserSelector(containerId, userList, selfText, false, (vals) => {
+      const val = vals[0] || '';
+      
+      // Create or update hidden input
+      let hidden = document.getElementById(dropdownId);
+      if (!hidden) {
+          hidden = document.createElement('input');
+          hidden.type = 'hidden';
+          hidden.id = dropdownId;
+          document.getElementById(containerId).appendChild(hidden);
       }
-    }
-  } catch (e) {
-    throw new Error("Error importing from buffer: " + e.message);
-  }
-  
-  throw new Error("Candidate not found in Internal DB or Buffer.");
-}
-
-/**
- * ADMIN: HIRES A CANDIDATE
- * 1. Creates entry in Employees_Core
- * 2. Creates entry in Employees_PII
- * 3. Creates Google Drive Folders
- * 4. Updates Candidate status to "Hired"
- */
-function webHireCandidate(candidateId, hiringData) {
-  const ss = getSpreadsheet();
-  const candSheet = getOrCreateSheet(ss, SHEET_NAMES.recruitment);
-  const coreSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
-
-  // A. Find Candidate
-  const candData = candSheet.getDataRange().getValues();
-  let candRow = -1;
-  let candidate = null;
-  
-  // Dynamically map headers
-  const candHeaders = candData[0];
-  const cIdx = {
-    id: candHeaders.indexOf("CandidateID"),
-    name: candHeaders.indexOf("Name"),
-    email: candHeaders.indexOf("Email"),
-    phone: candHeaders.indexOf("Phone"),
-    natId: candHeaders.indexOf("NationalID")
-  };
-
-  for (let i = 1; i < candData.length; i++) {
-    if (candData[i][cIdx.id] === candidateId) {
-      candRow = i + 1;
-      candidate = {
-        name: candData[i][cIdx.name],
-        email: candData[i][cIdx.email],
-        phone: candData[i][cIdx.phone],
-        nationalId: candData[i][cIdx.natId]
-      };
-      break;
-    }
-  }
-  
-  if (!candidate) throw new Error("Candidate not found.");
-
-  // B. Generate Employee ID
-  const lastRow = coreSheet.getLastRow();
-  const newEmpId = `KOM-${1000 + lastRow}`;
-
-  // C. Create CORE Record (Active Status - Skips Registration)
-  coreSheet.appendRow([
-    newEmpId,
-    hiringData.fullName || candidate.name,
-    hiringData.konectaEmail,
-    'agent',
-    'Active', // Auto-active
-    hiringData.directManager,
-    hiringData.functionalManager,
-    0, 0, 0, // Balances
-    hiringData.gender,
-    hiringData.empType,
-    hiringData.contractType,
-    hiringData.jobLevel,
-    hiringData.department,
-    hiringData.function,
-    hiringData.subFunction,
-    hiringData.gcm,
-    hiringData.scope,
-    hiringData.shore,
-    hiringData.dottedManager,
-    hiringData.projectManager,
-    hiringData.bonusPlan,
-    hiringData.nLevel,
-    "", 
-    "Active"
-  ]);
-
-  // D. Create PII Record (With Basic + Variable Split)
-  piiSheet.appendRow([
-    newEmpId,
-    hiringData.hiringDate,
-    hiringData.salary, // Total Salary
-    hiringData.iban,
-    hiringData.address,
-    candidate.phone,
-    "", "", 
-    candidate.nationalId,
-    hiringData.passport,
-    hiringData.socialInsurance,
-    hiringData.birthDate,
-    candidate.email,
-    hiringData.maritalStatus,
-    hiringData.dependents,
-    hiringData.emergencyContact,
-    hiringData.emergencyRelation,
-    hiringData.salary, 
-    hiringData.hourlyRate,
-    hiringData.variable // New Variable Pay Column
-  ]);
-
-  // E. Create Drive Folders
-  try {
-    const rootFolders = DriveApp.getFoldersByName("KOMPASS_HR_Files");
-    if (rootFolders.hasNext()) {
-      const root = rootFolders.next();
-      const empFolders = root.getFoldersByName("Employee_Files");
-      if (empFolders.hasNext()) {
-        const parent = empFolders.next();
-        const personalFolder = parent.createFolder(`${candidate.name}_${newEmpId}`);
-        personalFolder.createFolder("Payslips");
-        personalFolder.createFolder("Onboarding_Docs");
-        personalFolder.createFolder("Sick_Notes");
+      hidden.value = val;
+      // NEW: Trigger change event manually for logic hooks
+      if (dropdownId === 'reporting-line-user') {
+          onReportingLineUserChange();
       }
-    }
-  } catch (e) { Logger.log("Folder creation error: " + e.message); }
-
-  // F. Update Candidate Status
-  candSheet.getRange(candRow, 7).setValue("Hired"); // Status
-  candSheet.getRange(candRow, 8).setValue("Onboarding"); // Stage
-
-  return `Successfully hired ${candidate.name}. Employee ID: ${newEmpId}`;
+  }, defaultVal);
 }
-
-/**
- * ======================================================================
- * PHASE 5 DATABASE UPGRADE SCRIPT (FIXED)
- * ACTION: RUN THIS FUNCTION AGAIN.
- * PURPOSE: Expands existing sheets and creates new ones for the HRIS system.
- * ======================================================================
- */
-function _SETUP_PHASE_5_DATABASE() {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  Logger.log("Starting Phase 5 Database Upgrade...");
-
-  // --- 1. CREATE NEW SHEETS ---
-  
-  // 1.1 Requisitions (Job Openings)
-  const reqSheet = getOrCreateSheet(ss, SHEET_NAMES.requisitions);
-  // FIX: Check if lastRow is 0 (new sheet) OR 1 (potentially empty header)
-  if (reqSheet.getLastRow() === 0 || (reqSheet.getLastRow() === 1 && reqSheet.getRange("A1").getValue() === "")) {
-    reqSheet.getRange("A1:H1").setValues([[
-      "ReqID", "Title", "Department", "HiringManager", "OpenDate", 
-      "Status", "PoolCandidates", "JobDescription"
-    ]]);
-    reqSheet.setFrozenRows(1);
-    Logger.log("Created 'Requisitions' sheet with headers.");
-  }
-
-  // 1.2 Performance Reviews
-  const perfSheet = getOrCreateSheet(ss, SHEET_NAMES.performance);
-  if (perfSheet.getLastRow() === 0 || (perfSheet.getLastRow() === 1 && perfSheet.getRange("A1").getValue() === "")) {
-    perfSheet.getRange("A1:G1").setValues([[
-      "ReviewID", "EmployeeID", "Year", "ReviewPeriod", "Rating", 
-      "ManagerComments", "Date"
-    ]]);
-    perfSheet.setFrozenRows(1);
-    Logger.log("Created 'Performance_Reviews' sheet with headers.");
-  }
-
-  // 1.3 Employee History (Promotions/Transfers)
-  const histSheet = getOrCreateSheet(ss, SHEET_NAMES.historyLogs);
-  if (histSheet.getLastRow() === 0 || (histSheet.getLastRow() === 1 && histSheet.getRange("A1").getValue() === "")) {
-    histSheet.getRange("A1:F1").setValues([[
-      "HistoryID", "EmployeeID", "Date", "EventType", 
-      "OldValue", "NewValue"
-    ]]);
-    histSheet.setFrozenRows(1);
-    Logger.log("Created 'Employee_History' sheet with headers.");
-  }
-
-  // --- 2. EXPAND EXISTING SHEETS ---
-
-  // 2.1 Expand Employees_Core
-  const coreSheet = ss.getSheetByName(SHEET_NAMES.employeesCore);
-  if (coreSheet) {
-    const newCoreCols = [
-      "Gender", "EmploymentType", "ContractType", "JobLevel", "Department",
-      "Function", "SubFunction", "GCMLevel", "Scope", "OffshoreOnshore",
-      "DottedManager", "ProjectManagerEmail", "BonusPlan", "N_Level", 
-      "ExitDate", "Status" 
-    ];
-    addColumnsToSheet(coreSheet, newCoreCols);
-    Logger.log("Updated 'Employees_Core' with new HR columns.");
-  } else {
-    Logger.log("ERROR: Employees_Core sheet not found. Run Phase 1 setup first.");
-  }
-
-  // 2.2 Expand Employees_PII
-  const piiSheet = ss.getSheetByName(SHEET_NAMES.employeesPII);
-  if (piiSheet) {
-    const newPiiCols = [
-      "NationalID", "PassportNumber", "SocialInsuranceNumber", "BirthDate",
-      "PersonalEmail", "MaritalStatus", "DependentsInfo", "EmergencyContact",
-      "EmergencyRelation", "Salary", "HourlyRate"
-    ];
-    addColumnsToSheet(piiSheet, newPiiCols);
-    
-    // Set Date Format for BirthDate column
-    try {
-      const headers = piiSheet.getRange(1, 1, 1, piiSheet.getLastColumn()).getValues()[0];
-      const dobIndex = headers.indexOf("BirthDate") + 1;
-      if (dobIndex > 0) piiSheet.getRange(2, dobIndex, piiSheet.getMaxRows(), 1).setNumberFormat("yyyy-mm-dd");
-    } catch (e) {
-      Logger.log("Could not set date format (sheet might be empty): " + e.message);
-    }
-    
-    Logger.log("Updated 'Employees_PII' with new sensitive columns.");
-  }
-
-  // 2.3 Update Recruitment_Candidates
-  const recSheet = ss.getSheetByName(SHEET_NAMES.recruitment);
-  if (recSheet) {
-    const newRecCols = [
-      "NationalID", "LanguageLevel", "SecondLanguage", "Referrer", 
-      "HR_Feedback", "Management_Feedback", "Technical_Feedback", 
-      "Client_Feedback", "OfferStatus"
-    ];
-    addColumnsToSheet(recSheet, newRecCols);
-    Logger.log("Updated 'Recruitment_Candidates' with feedback columns.");
-  }
-
-  Logger.log("Phase 5 Database Upgrade Complete!");
-}
-
-/**
- * HELPER: specific to this upgrade script.
- * Adds missing columns to the end of a sheet's header row.
- * FIX: Handles empty sheets correctly.
- */
-function addColumnsToSheet(sheet, newHeaders) {
-  const lastCol = sheet.getLastColumn();
-
-  // Case 1: Sheet is completely empty
-  if (lastCol === 0) {
-    if (newHeaders.length > 0) {
-      sheet.getRange(1, 1, 1, newHeaders.length).setValues([newHeaders]);
-    }
-    return;
-  }
-
-  // Case 2: Sheet has existing data, append only new columns
-  const currentHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  const headersToAdd = [];
-
-  newHeaders.forEach(header => {
-    if (!currentHeaders.includes(header)) {
-      headersToAdd.push(header);
-    }
-  });
-
-  if (headersToAdd.length > 0) {
-    // Append to the next available column
-    sheet.getRange(1, lastCol + 1, 1, headersToAdd.length).setValues([headersToAdd]);
-  }
-}
-function debugDatabaseMapping() {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sheet = ss.getSheetByName("Employees_Core");
-  const data = sheet.getDataRange().getValues();
-  const headers = data[0];
-  
-  Logger.log("--- DEBUGGING HEADERS ---");
-  Logger.log("All Headers: " + headers.join(", "));
-  
-  const dmIndex = headers.indexOf("DirectManagerEmail");
-  const pmIndex = headers.indexOf("ProjectManagerEmail");
-  
-  Logger.log(`DirectManagerEmail Index: ${dmIndex} (Should be > -1)`);
-  Logger.log(`ProjectManagerEmail Index: ${pmIndex} (Should be > -1)`);
-  
-  if (dmIndex === -1 || pmIndex === -1) {
-    Logger.log("❌ CRITICAL ERROR: One or both manager headers are missing or misspelled!");
-    return;
-  }
-
-  // Check the first user row (Row 2)
-  if (data.length > 1) {
-    const row = data[1];
-    Logger.log("--- SAMPLE USER DATA (Row 2) ---");
-    Logger.log(`Name: ${row[headers.indexOf("Name")]}`);
-    Logger.log(`Email: ${row[headers.indexOf("Email")]}`);
-    Logger.log(`Direct Manager Value: '${row[dmIndex]}'`);
-    Logger.log(`Project Manager Value: '${row[pmIndex]}'`);
-  }
-}
-
-// ==========================================
-// === PHASE 3: RECRUITMENT & ONBOARDING  ===
-// ==========================================
-
-/**
- * 1. CREATE REQUISITION (Admin)
- * Opens a new job position in the 'Requisitions' sheet.
- */
-function webCreateRequisition(data) {
-  const ss = getSpreadsheet();
-  const reqSheet = getOrCreateSheet(ss, SHEET_NAMES.requisitions);
-  const reqID = `REQ-${new Date().getTime()}`; // Unique Job ID
-  
-  reqSheet.appendRow([
-    reqID,
-    data.title,
-    data.department,
-    data.hiringManager, // Email of the manager
-    new Date(),         // Open Date
-    "Open",             // Status
-    "",                 // Pool Candidates (Empty start)
-    data.description
-  ]);
-  return "Requisition opened successfully: " + reqID;
-}
-
-/**
- * 2. GET OPEN REQUISITIONS (Public & Admin)
- * Returns list of open jobs for the dropdown in Recruitment.html
- */
-function webGetOpenRequisitions() {
-  const ss = getSpreadsheet();
-  const reqSheet = getOrCreateSheet(ss, SHEET_NAMES.requisitions);
-  const data = reqSheet.getDataRange().getValues();
-  const jobs = [];
-  
-  for (let i = 1; i < data.length; i++) {
-    // Col F (Index 5) is Status
-    if (data[i][5] === 'Open') {
-      jobs.push({
-        id: data[i][0],
-        title: data[i][1],
-        dept: data[i][2]
-      });
-    }
-  }
-  return jobs;
-}
-
-// ==========================================
-// === PHASE 4: PROFILE & SELF-SERVICE API ===
-// ==========================================
-
-/**
- * 1. GET FULL PROFILE (Core + PII)
- * Fetches all data points for the "My Profile" tab.
- */
-function webGetMyProfile() {
-  const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-  const ss = getSpreadsheet();
-  const userData = getUserDataFromDb(ss); // This already reads Core columns
-  
-  // Find user in the loaded list
-  const userCore = userData.userList.find(u => u.email === userEmail);
-  if (!userCore) throw new Error("User profile not found.");
-
-  // Fetch Extended PII Data
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
-  const piiData = piiSheet.getDataRange().getValues();
-  let piiRecord = {};
-
-  // Find PII row by EmployeeID
-  for (let i = 1; i < piiData.length; i++) {
-    if (piiData[i][0] === userCore.empID) {
-      piiRecord = {
-        hiringDate: convertDateToString(parseDate(piiData[i][1])),
-        salary: piiData[i][2],       // Confidential
-        iban: piiData[i][3],         // Confidential
-        address: piiData[i][4],
-        phone: piiData[i][5],
-        medical: piiData[i][6],
-        contractLink: piiData[i][7],
-        nationalId: piiData[i][8],   // New Phase 5 Col
-        passport: piiData[i][9],
-        socialInsurance: piiData[i][10],
-        birthDate: convertDateToString(parseDate(piiData[i][11])),
-        personalEmail: piiData[i][12],
-        maritalStatus: piiData[i][13],
-        dependents: piiData[i][14],
-        emergencyContact: piiData[i][15],
-        emergencyRelation: piiData[i][16]
-      };
-      break;
-    }
-  }
-
-  // Calculate Age
-  let age = "N/A";
-  if (piiRecord.birthDate) {
-    const dob = new Date(piiRecord.birthDate);
-    const diff_ms = Date.now() - dob.getTime();
-    const age_dt = new Date(diff_ms); 
-    age = Math.abs(age_dt.getUTCFullYear() - 1970);
-  }
-
-  // Fetch additional Core fields that getUserDataFromDb might not have exposed in the simplified list
-  // We can re-read the row from the Core Sheet directly to be safe, or rely on getUserDataFromDb if we updated it fully.
-  // Let's just return what we have, assuming getUserDataFromDb is robust.
-  // If you find fields missing, we can add a direct read here.
-
-  return {
-    core: {
-      ...userCore, // Includes Name, ID, Role, Managers, Balances
-      // You might need to explicitly map the new Phase 5 Core columns if getUserDataFromDb doesn't return them in the object
-      // For now, let's assume basic data. If you need specifically "JobLevel" or "GCM", we should ensure getUserDataFromDb returns them.
-    },
-    pii: {
-      ...piiRecord,
-      age: age
-    }
-  };
-}
-
-/**
- * 2. UPDATE PROFILE (Self-Service)
- * Allows users to update: Phone, Address, Emergency Contact, Personal Email.
- * Sensitive fields (IBAN, Name) trigger a request log.
- */
-function webUpdateProfile(formData) {
-  const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-  const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const userData = getUserDataFromDb(dbSheet);
-  
-  const user = userData.userList.find(u => u.email === userEmail);
-  if (!user) throw new Error("User not found.");
-
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
-  const piiData = piiSheet.getDataRange().getValues();
-  let rowToUpdate = -1;
-
-  for (let i = 1; i < piiData.length; i++) {
-    if (piiData[i][0] === user.empID) {
-      rowToUpdate = i + 1;
-      break;
-    }
-  }
-  if (rowToUpdate === -1) throw new Error("PII record not found.");
-
-  // Update Allowed Fields
-  // Address (Col E = 5)
-  if (formData.address) piiSheet.getRange(rowToUpdate, 5).setValue(formData.address);
-  // Phone (Col F = 6)
-  if (formData.phone) piiSheet.getRange(rowToUpdate, 6).setValue(formData.phone);
-  // Personal Email (Col M = 13)
-  if (formData.personalEmail) piiSheet.getRange(rowToUpdate, 13).setValue(formData.personalEmail);
-  // Emergency Contact (Col P = 16)
-  if (formData.emergencyContact) piiSheet.getRange(rowToUpdate, 16).setValue(formData.emergencyContact);
-  // Emergency Relation (Col Q = 17)
-  if (formData.emergencyRelation) piiSheet.getRange(rowToUpdate, 17).setValue(formData.emergencyRelation);
-
-  // Log Restricted Changes (IBAN, Marital Status)
-  const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-  
-  // Check IBAN change (Col D = 4)
-  const currentIBAN = piiData[rowToUpdate-1][3];
-  if (formData.iban && formData.iban !== String(currentIBAN)) {
-    logsSheet.appendRow([new Date(), user.name, userEmail, "Data Change Request", `Requested IBAN change to: ${formData.iban}`]);
-    return "Profile updated. Note: IBAN change has been sent to HR for approval.";
-  }
-
-  return "Profile updated successfully.";
-}
-
-// ==========================================
-// === PHASE 5: PERFORMANCE & OFFBOARDING ===
-// ==========================================
-
-// 3. Updated Performance Review
-function webSubmitPerformanceReview(reviewData) {
-  // Checks if user has permission to submit reviews
-  const { userEmail: adminEmail, userData, ss } = getAuthorizedContext('SUBMIT_PERFORMANCE');
-  
-  const targetEmail = reviewData.employeeEmail.toLowerCase();
-  
-  // Contextual Check: Can only review OWN team (unless Superadmin)
-  const targetSupervisor = userData.emailToSupervisor[targetEmail];
-  const targetProjectMgr = userData.emailToProjectManager[targetEmail];
-  const adminRole = userData.emailToRole[adminEmail];
-
-  const isAuthorized = (adminRole === 'superadmin') || 
-                       (targetSupervisor === adminEmail) || 
-                       (targetProjectMgr === adminEmail);
-
-  if (!isAuthorized) throw new Error("Permission denied. You can only review your own team members.");
-
-  const targetUser = userData.userList.find(u => u.email === targetEmail);
-  if (!targetUser) throw new Error("Employee not found.");
-
-  const perfSheet = getOrCreateSheet(ss, SHEET_NAMES.performance);
-  perfSheet.appendRow([
-    `REV-${new Date().getTime()}`,
-    targetUser.empID,
-    reviewData.year,
-    reviewData.period,
-    reviewData.rating,
-    reviewData.comments,
-    new Date()
-  ]);
-
-  return "Performance review submitted successfully.";
-}
-
-/**
- * 2. GET PERFORMANCE HISTORY (Employee/Manager)
- * Returns list of past reviews for a specific user.
- */
-function webGetPerformanceHistory(targetEmail) {
-  const viewerEmail = Session.getActiveUser().getEmail().toLowerCase();
-  const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-  const userData = getUserDataFromDb(dbSheet);
-  
-  const emailToFetch = targetEmail || viewerEmail;
-  const viewerRole = userData.emailToRole[viewerEmail] || 'agent';
-
-  // Security Check: Agents can only see their own. Managers can see team's.
-  if (viewerRole === 'agent' && emailToFetch !== viewerEmail) {
-    throw new Error("Permission denied.");
-  }
-
-  // Get Employee ID
-  const targetUser = userData.userList.find(u => u.email === emailToFetch);
-  if (!targetUser) return []; // No user found
-
-  const perfSheet = getOrCreateSheet(ss, SHEET_NAMES.performance);
-  const data = perfSheet.getDataRange().getValues();
-  const reviews = [];
-
-  // Columns: ReviewID(0), EmpID(1), Year(2), Period(3), Rating(4), Comments(5), Date(6)
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][1] === targetUser.empID) {
-      reviews.push({
-        id: data[i][0],
-        year: data[i][2],
-        period: data[i][3],
-        rating: data[i][4],
-        comments: data[i][5],
-        date: convertDateToString(new Date(data[i][6]))
-      });
-    }
-  }
-  
-  return reviews.reverse(); // Newest first
-}
-
-// 1. Updated Offboarding
-function webOffboardEmployee(offboardData) {
-  // Replaces hardcoded check with dynamic RBAC
-  const { userEmail: adminEmail, userData, ss } = getAuthorizedContext('OFFBOARD_EMPLOYEE');
-
-  const targetEmail = offboardData.email.toLowerCase();
-  const row = userData.emailToRow[targetEmail];
-  if (!row) throw new Error("User not found.");
-
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
-  const headers = dbSheet.getRange(1, 1, 1, dbSheet.getLastColumn()).getValues()[0];
-  const statusCol = headers.indexOf("Status") + 1;
-  const exitDateCol = headers.indexOf("ExitDate") + 1;
-
-  if (statusCol > 0) dbSheet.getRange(row, statusCol).setValue("Left");
-  if (exitDateCol > 0) dbSheet.getRange(row, exitDateCol).setValue(offboardData.exitDate);
-
-  // Log History
-  const histSheet = getOrCreateSheet(ss, SHEET_NAMES.historyLogs);
-  const targetUser = userData.userList.find(u => u.email === targetEmail);
-  histSheet.appendRow([
-    `HIST-${new Date().getTime()}`,
-    targetUser ? targetUser.empID : "UNKNOWN",
-    new Date(),
-    "Termination/Exit",
-    "Active",
-    "Left"
-  ]);
-
-  return `Successfully offboarded ${targetEmail}. Status set to 'Left'.`;
-}
-
-// --- JOB REQUISITION MANAGEMENT ---
-
-function webGetRequisitions(filterStatus) {
-  try {
-    const ss = getSpreadsheet();
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.requisitions);
-    const data = sheet.getDataRange().getValues();
-    const jobs = [];
-    
-    // Skip header
-    for (let i = 1; i < data.length; i++) {
-      const status = data[i][5];
-      if (filterStatus === 'All' || status === filterStatus) {
-        jobs.push({
-          id: data[i][0],
-          title: data[i][1],
-          dept: data[i][2],
-          manager: data[i][3],
-          date: convertDateToString(new Date(data[i][4])),
-          status: status,
-          desc: data[i][7]
+      
+      function populateSupervisorDropdown(admins, dropdownId = 'leave-supervisor') {
+        const select = document.getElementById(dropdownId);
+        select.innerHTML = '<option value="">-- Select a supervisor --</option>'; 
+        
+        admins.forEach(admin => {
+          const option = document.createElement('option');
+          option.value = admin.email; 
+          option.textContent = `${admin.name}`; 
+          select.appendChild(option);
         });
       }
-    }
-    return jobs.reverse();
-  } catch (e) { return { error: e.message }; }
-}
-
-function webManageRequisition(reqId, action, newData) {
-  try {
-    const ss = getSpreadsheet();
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.requisitions);
-    const data = sheet.getDataRange().getValues();
-    let rowIdx = -1;
-
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][0] === reqId) { rowIdx = i + 1; break; }
-    }
-    if (rowIdx === -1) throw new Error("Requisition not found");
-
-    if (action === 'Archive') {
-      sheet.getRange(rowIdx, 6).setValue('Archived');
-    } else if (action === 'Edit') {
-      if(newData.title) sheet.getRange(rowIdx, 2).setValue(newData.title);
-      if(newData.dept) sheet.getRange(rowIdx, 3).setValue(newData.dept);
-      if(newData.desc) sheet.getRange(rowIdx, 8).setValue(newData.desc);
-    }
-    return "Success";
-  } catch (e) { return "Error: " + e.message; }
-}
-
-// --- CANDIDATE WORKFLOW & AUTOMATION ---
-
-function webGetCandidateHistory(email) {
-  try {
-    const ss = getSpreadsheet();
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.recruitment);
-    const data = sheet.getDataRange().getValues();
-    const history = [];
-    
-    for (let i = 1; i < data.length; i++) {
-      if (String(data[i][2]).toLowerCase() === email.toLowerCase()) {
-        history.push({
-          position: data[i][4],
-          date: convertDateToString(new Date(data[i][9])), // AppliedDate
-          status: data[i][6],
-          stage: data[i][7]
-        });
-      }
-    }
-    return history;
-  } catch (e) { return []; }
-}
-
-function webSendRejectionEmail(candidateId, reason, sendEmail) {
-  try {
-    const ss = getSpreadsheet();
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.recruitment);
-    const data = sheet.getDataRange().getValues();
-    let rowIdx = -1;
-    let candidate = {};
-
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][0] === candidateId) { 
-        rowIdx = i + 1; 
-        candidate = { name: data[i][1], email: data[i][2], pos: data[i][4] };
-        break; 
-      }
-    }
-    if (rowIdx === -1) throw new Error("Candidate not found");
-
-    // Update Sheet
-    // Col 7 = Status, Col 8 = Stage, Col 20 = RejectionReason (New)
-    sheet.getRange(rowIdx, 7).setValue("Rejected");
-    sheet.getRange(rowIdx, 8).setValue("Disqualified");
-    // Assuming RejectionReason is column 20 (Index 19) based on fixer schema
-    // Dynamically find index just in case
-    const headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
-    const reasonIdx = headers.indexOf("RejectionReason");
-    if (reasonIdx > -1) sheet.getRange(rowIdx, reasonIdx + 1).setValue(reason);
-
-    if (sendEmail) {
-      const subject = `Update regarding your application for ${candidate.pos}`;
-      const body = `Dear ${candidate.name},\n\nThank you for your interest in the ${candidate.pos} position at Konecta. After careful consideration, we have decided to move forward with other candidates whose qualifications more closely match our current needs.\n\nWe wish you the best in your job search.\n\nBest regards,\nKonecta HR Team`;
       
-      MailApp.sendEmail({ to: candidate.email, subject: subject, body: body });
-      return "Rejection recorded & Email sent.";
-    }
-    return "Rejection recorded (No email sent).";
-  } catch (e) { return "Error: " + e.message; }
-}
-
-function webSendOfferLetter(candidateId, offerDetails) {
-  try {
-    const ss = getSpreadsheet();
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.recruitment);
-    const data = sheet.getDataRange().getValues();
-    let candidate = null;
-    
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][0] === candidateId) {
-        candidate = { name: data[i][1], email: data[i][2], pos: data[i][4] };
-        break;
+      function populateMyBalances(balances) {
+        if (!balances) return;
+        document.getElementById('balance-annual').textContent = balances.annual;
+        document.getElementById('balance-sick').textContent = balances.sick;
+        document.getElementById('balance-casual').textContent = balances.casual;
       }
-    }
-    if (!candidate) throw new Error("Candidate not found");
 
-    const subject = `Job Offer: ${candidate.pos} at Konecta`;
-    const body = `Dear ${candidate.name},\n\nWe are pleased to offer you the position of ${candidate.pos} at Konecta!\n\n` +
-                 `**Start Date:** ${offerDetails.startDate}\n` +
-                 `**Basic Salary:** ${offerDetails.basic}\n` +
-                 `**Variable/Bonus:** ${offerDetails.variable}\n\n` +
-                 `Please reply to this email to accept this offer.\n\nBest regards,\nKonecta HR`;
-
-    MailApp.sendEmail({ to: candidate.email, subject: subject, body: body });
-    return "Offer letter sent to " + candidate.email;
-  } catch (e) { return "Error: " + e.message; }
-}
-
-
-// ==========================================
-// === PHASE 6.3: PAYROLL & FINANCE HUB ===
-// ==========================================
-
-/**
- * USER: Get My Financial Profile & Entitlements
- */
-function webGetMyFinancials() {
-  const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-  const ss = getSpreadsheet();
-  const userData = getUserDataFromDb(ss);
+function punch(action) {
+  const adminSelect = document.getElementById('agent-select');
+  let targetUserName = '';
   
-  const userCore = userData.userList.find(u => u.email === userEmail);
-  if (!userCore) throw new Error("User not found.");
-
-  // 1. Get Salary Breakdown from PII
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
-  const piiData = piiSheet.getDataRange().getValues();
-  const piiHeaders = piiData[0];
-  
-  // Map Indexes
-  const idx = {
-    empId: piiHeaders.indexOf("EmployeeID"),
-    basic: piiHeaders.indexOf("BasicSalary"),
-    variable: piiHeaders.indexOf("VariablePay"),
-    hourly: piiHeaders.indexOf("HourlyRate"),
-    total: piiHeaders.indexOf("Salary")
-  };
-
-  let salaryInfo = { basic: 0, variable: 0, total: 0 };
-
-  for (let i = 1; i < piiData.length; i++) {
-    if (piiData[i][idx.empId] === userCore.empID) {
-      salaryInfo = {
-        basic: piiData[i][idx.basic] || "Not Set",
-        variable: piiData[i][idx.variable] || "Not Set",
-        total: piiData[i][idx.total] || "Not Set"
-      };
-      break;
-    }
-  }
-
-  // 2. Get Entitlements (Bonuses, Overtime)
-  const finSheet = getOrCreateSheet(ss, SHEET_NAMES.financialEntitlements);
-  const finData = finSheet.getDataRange().getValues();
-  const entitlements = [];
-
-  for (let i = 1; i < finData.length; i++) {
-    // Col 1 = EmployeeEmail
-    if (String(finData[i][1]).toLowerCase() === userEmail) {
-      entitlements.push({
-        type: finData[i][3],
-        amount: finData[i][4],
-        currency: finData[i][5],
-        date: convertDateToString(new Date(finData[i][6])), // Due Date
-        status: finData[i][7],
-        desc: finData[i][8]
-      });
-    }
-  }
-
-  return { salary: salaryInfo, entitlements: entitlements.reverse() };
-}
-
-/**
- * ADMIN: Submit a Single Entitlement
- */
-function webSubmitEntitlement(data) {
-  try {
-    const { userEmail: adminEmail, userData, ss } = getAuthorizedContext('MANAGE_FINANCE');
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.financialEntitlements);
+  if (selfRole === 'admin' || selfRole === 'superadmin') {
+    const selectedEmail = adminSelect.value;
     
-    const targetEmail = data.email.toLowerCase();
-    const userObj = userData.userList.find(u => u.email === targetEmail);
-    const targetName = userObj ? userObj.name : targetEmail;
-    const id = `FIN-${new Date().getTime()}`;
-    
-    sheet.appendRow([id, targetEmail, targetName, data.type, data.amount, "EGP", new Date(data.date), "Pending", data.desc, adminEmail, new Date()]);
-    return "Entitlement added successfully.";
-  } catch (e) { return "Error: " + e.message; }
-}
-
-/**
- * ADMIN: Bulk Upload Entitlements via CSV Data
- * Expected CSV: Email, Type, Amount, Date, Description
- */
-function webUploadEntitlementsCSV(csvData) {
-  try {
-    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
-    checkFinancialPermission(adminEmail);
-
-    const ss = getSpreadsheet();
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.financialEntitlements);
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
-    const userData = getUserDataFromDb(dbSheet); // To map emails to names
-
-    let count = 0;
-    
-    csvData.forEach(row => {
-      // row is { Email: '...', Type: '...', Amount: ... }
-      if (!row.Email || !row.Amount) return;
-      
-      const targetEmail = row.Email.toLowerCase();
-      const userObj = userData.userList.find(u => u.email === targetEmail);
-      const targetName = userObj ? userObj.name : targetEmail;
-      const id = `FIN-${new Date().getTime()}-${Math.floor(Math.random()*1000)}`;
-
-      sheet.appendRow([
-        id,
-        targetEmail,
-        targetName,
-        row.Type || "Bonus",
-        row.Amount,
-        "EGP",
-        new Date(row.Date || new Date()),
-        "Pending",
-        row.Description || "Bulk Upload",
-        adminEmail,
-        new Date()
-      ]);
-      count++;
-    });
-
-    return `Successfully processed ${count} records.`;
-  } catch (e) { return "Error: " + e.message; }
-}
-
-// --- Helper: Permission Check ---
-function checkFinancialPermission(email) {
-  const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
-  const userData = getUserDataFromDb(dbSheet);
-  const role = userData.emailToRole[email];
-  
-  if (role !== 'financial_manager' && role !== 'superadmin') {
-    throw new Error("Permission denied. Financial Manager access required.");
-  }
-}
-
-/**
- * PHASE 6.5: COACHING HIERARCHY FIX
- * Returns a list of {name, email} for users the current user is allowed to coach.
- * - Superadmin: Returns All Users
- * - Admin/Manager: Returns their full downstream hierarchy (Direct + Indirect)
- * - Agent: Returns empty list
- */
-function webGetCoachableUsers() {
-  try {
-    const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const ss = getSpreadsheet();
-    const userData = getUserDataFromDb(ss);
-    const userRole = userData.emailToRole[userEmail];
-
-    let targetEmails = new Set();
-
-    if (userRole === 'superadmin') {
-       // Superadmins can coach everyone
-       userData.userList.forEach(u => targetEmails.add(u.email));
-    } 
-    else if (userRole === 'admin' || userRole === 'manager' || userRole === 'financial_manager') {
-       // Managers coach their hierarchy
-       // Reuse the existing hierarchy walker
-       const hierarchyEmails = webGetAllSubordinateEmails(userEmail); 
-       hierarchyEmails.forEach(e => targetEmails.add(e));
-       
-       // Remove the manager themselves from the list (optional, but usually you coach others)
-       if (targetEmails.has(userEmail)) targetEmails.delete(userEmail);
-    } 
-    else {
-       return []; // Agents don't coach
-    }
-
-    // Map emails to Name/Email objects for the frontend dropdown
-    const result = [];
-    targetEmails.forEach(email => {
-       const u = userData.userList.find(user => user.email === email);
-       if (u) {
-         result.push({ name: u.name, email: u.email });
-       }
-    });
-
-    // Sort Alphabetically
-    return result.sort((a, b) => a.name.localeCompare(b.name));
-
-  } catch (e) {
-    Logger.log("webGetCoachableUsers Error: " + e.message);
-    return [];
-  }
-}
-
-// ==========================================================
-// === PHASE 6.6: SMART RBAC ENGINE ===
-// ==========================================================
-
-/**
- * 🧠 SMART CONTEXT: The only line you need at the start of a function.
- * Usage: const { userEmail, userData, ss } = getAuthorizedContext('MANAGE_FINANCE');
- */
-function getAuthorizedContext(requiredPermission) {
-  const userEmail = Session.getActiveUser().getEmail().toLowerCase();
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  
-  // Use existing helper to get all data
-  const userData = getUserDataFromDb(ss);
-  const userRole = userData.emailToRole[userEmail] || 'agent';
-
-  // If a permission is required, check it
-  if (requiredPermission) {
-    const permissionsMap = getPermissionsMap(ss);
-    
-    // 1. Check if permission exists in DB
-    if (!permissionsMap[requiredPermission]) {
-      console.warn(`Warning: Permission '${requiredPermission}' not found in RBAC sheet.`);
-      throw new Error(`Access Denied: Permission check failed (${requiredPermission}).`);
-    }
-
-    // 2. Check if user's role has this permission
-    const hasAccess = permissionsMap[requiredPermission][userRole];
-    
-    if (!hasAccess) {
-      throw new Error(`Permission Denied: You need '${requiredPermission}' access.`);
-    }
-  }
-
-  return { 
-    userEmail: userEmail, 
-    userName: userData.emailToName[userEmail],
-    userRole: userRole,
-    userData: userData,
-    ss: ss 
-  };
-}
-
-/**
- * Helper: Reads and Caches the RBAC Sheet
- */
-function getPermissionsMap(ss) {
-  const cache = CacheService.getScriptCache();
-  const cached = cache.get("RBAC_MAP_V1");
-  if (cached) return JSON.parse(cached);
-
-  const sheet = getOrCreateSheet(ss, SHEET_NAMES.rbac);
-  const data = sheet.getDataRange().getValues();
-  const headers = data[0]; // [ID, Desc, superadmin, admin, manager, financial_manager, agent]
-  const map = {};
-
-  for (let i = 1; i < data.length; i++) {
-    const permID = data[i][0];
-    map[permID] = {};
-    for (let c = 2; c < headers.length; c++) {
-      const role = headers[c];
-      map[permID][role] = String(data[i][c]).toUpperCase() === 'TRUE';
-    }
-  }
-
-  cache.put("RBAC_MAP_V1", JSON.stringify(map), 600); // Cache for 10 mins
-  return map;
-}
-
-
-
-// ==========================================
-// === PHASE 7: HR ADMIN & PII TOOLS ===
-// ==========================================
-
-/**
- * ADMIN: Search for an employee to edit their PII.
- * Returns Core data merged with PII data.
- */
-function webSearchEmployeePII(query) {
-  const { userEmail, userData, ss } = getAuthorizedContext('OFFBOARD_EMPLOYEE'); // Reusing a high-level HR permission
-  
-  const lowerQuery = query.toLowerCase().trim();
-  const targetUser = userData.userList.find(u => 
-    u.email.includes(lowerQuery) || u.name.toLowerCase().includes(lowerQuery)
-  );
-
-  if (!targetUser) throw new Error("User not found.");
-
-  // Fetch PII Data
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
-  const piiData = piiSheet.getDataRange().getValues();
-  const piiHeaders = piiData[0];
-  
-  let piiRow = {};
-  const empIdIdx = piiHeaders.indexOf("EmployeeID");
-  
-  for (let i = 1; i < piiData.length; i++) {
-    if (piiData[i][empIdIdx] === targetUser.empID) {
-      // Map all headers to the row values
-      piiHeaders.forEach((header, index) => {
-        let value = piiData[i][index];
-        // Format dates
-        if (value instanceof Date) value = convertDateToString(value).split('T')[0];
-        piiRow[header] = value;
-      });
-      break;
-    }
-  }
-
-  return {
-    core: targetUser,
-    pii: piiRow
-  };
-}
-
-/**
- * ADMIN: Update PII fields for an employee.
- */
-function webUpdateEmployeePII(empID, formData) {
-  const { userEmail: adminEmail, ss } = getAuthorizedContext('OFFBOARD_EMPLOYEE');
-  
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
-  const data = piiSheet.getDataRange().getValues();
-  const headers = data[0];
-  
-  let rowIndex = -1;
-  // Find row by EmployeeID (Col A)
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === empID) {
-      rowIndex = i + 1;
-      break;
-    }
-  }
-
-  if (rowIndex === -1) throw new Error("Employee PII record not found.");
-
-  // Update fields dynamically based on formData keys matching headers
-  // We only allow specific editable fields for safety
-  const allowedFields = [
-    "NationalID", "IBAN", "PassportNumber", "SocialInsuranceNumber", 
-    "Address", "Phone", "PersonalEmail", "MaritalStatus", 
-    "EmergencyContact", "EmergencyRelation", "BasicSalary", "VariablePay"
-  ];
-
-  const updates = [];
-
-  for (const [key, value] of Object.entries(formData)) {
-    if (allowedFields.includes(key)) {
-      const colIndex = headers.indexOf(key);
-      if (colIndex > -1) {
-        piiSheet.getRange(rowIndex, colIndex + 1).setValue(value);
-        updates.push(`${key}: ${value}`);
-      }
-    }
-  }
-
-  // Log changes
-  const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-  logsSheet.appendRow([
-    new Date(),
-    `ID: ${empID}`,
-    adminEmail,
-    "Admin PII Update",
-    `Updated: ${updates.join(', ')}`
-  ]);
-
-  return "Employee data updated successfully.";
-}
-
-/**
- * ADMIN: Get pending data change requests (from Logs).
- */
-function webGetPendingDataChanges() {
-  const { ss } = getAuthorizedContext('OFFBOARD_EMPLOYEE');
-  const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-  const data = logsSheet.getDataRange().getValues();
-  const requests = [];
-
-  // Loop backwards to see newest first
-  for (let i = data.length - 1; i > 0; i--) {
-    const row = data[i];
-    // Look for "Data Change Request" or "Profile Change Request"
-    if (row[3] === "Data Change Request" || row[3] === "Profile Change Request") {
-      requests.push({
-        date: convertDateToString(new Date(row[0])),
-        user: row[1],
-        email: row[2],
-        details: row[4]
-      });
-    }
-    // Limit to last 20 requests to keep it snappy
-    if (requests.length >= 20) break;
-  }
-  return requests;
-}
-
-
-
-// ==========================================
-// === PHASE 5: OVERTIME & DAY OFF SYSTEM (Double Approval) ===
-// ==========================================
-
-/**
- * SUBMIT: Agent Request OR Manager Assignment
- */
-function webSubmitOvertimeRequest(requestData) {
-  const { userEmail: submitterEmail, userData, ss } = getAuthorizedContext(null);
-  const otSheet = getOrCreateSheet(ss, SHEET_NAMES.overtime);
-  
-  // 1. Determine Target User (Agent vs Manager Assignment)
-  let targetEmail = submitterEmail;
-  let initiatedBy = "Agent";
-  
-  // If a manager is assigning to someone else
-  if (requestData.targetEmail && requestData.targetEmail !== submitterEmail) {
-      // Check permission
-      const { userRole } = getAuthorizedContext('MANAGE_OVERTIME'); // Ensure they are a manager
-      targetEmail = requestData.targetEmail;
-      initiatedBy = `Manager (${userData.userName})`;
-  }
-
-  const targetUser = userData.userList.find(u => u.email === targetEmail);
-  if (!targetUser) throw new Error("Target user not found.");
-
-  // 2. Schedule Validation
-  const shiftDate = new Date(requestData.date);
-  const schedule = getScheduleForDate(targetEmail, shiftDate);
-  const type = requestData.type;
-
-  if (type === "Work Day Off") {
-      if (schedule && schedule.start && schedule.leaveType !== 'Day Off' && schedule.leaveType !== 'Absent') {
-          throw new Error(`User already has a shift on ${requestData.date}. Use Pre/Post Shift.`);
-      }
-  } else {
-      if (!schedule || !schedule.end) {
-          throw new Error(`No active schedule found for ${targetUser.name} on this date.`);
-      }
-  }
-
-  // 3. Time Validation
-  const otStartObj = createDateTime(shiftDate, requestData.startTime);
-  let otEndObj = createDateTime(shiftDate, requestData.endTime);
-  if (otEndObj < otStartObj) otEndObj.setDate(otEndObj.getDate() + 1); // Overnight
-  
-  const duration = (otEndObj - otStartObj) / (1000 * 60 * 60);
-  if (duration <= 0) throw new Error("Invalid time range.");
-
-  // 4. Determine Approval Flow
-  const directMgr = targetUser.supervisor;
-  const projectMgr = targetUser.projectManager;
-  
-  let directStatus = "Pending";
-  let projectStatus = "Pending";
-  let overallStatus = "Pending Direct Mgr";
-
-  // Auto-approve if the submitter IS one of the managers
-  if (submitterEmail === directMgr) {
-      directStatus = "Approved";
-      overallStatus = "Pending Project Mgr";
-  }
-  if (submitterEmail === projectMgr) {
-      projectStatus = "Approved";
-      // If Direct is still pending, it stays "Pending Direct". 
-      // If Direct was already approved (unlikely in this flow), it moves to Approved.
-  }
-  
-  // Edge Case: If submitter is Superadmin, approve ALL
-  if (userData.userRole === 'superadmin') {
-      directStatus = "Approved";
-      projectStatus = "Approved";
-      overallStatus = "Approved";
-  }
-
-  // 5. Save Request
-  const reqID = `OT-${new Date().getTime()}`;
-  otSheet.appendRow([
-    reqID,
-    targetUser.empID,
-    targetUser.name,
-    shiftDate,
-    otStartObj,
-    otEndObj,
-    duration.toFixed(2),
-    requestData.reason,
-    overallStatus, // Status
-    "",            // Comment
-    "",            // ActionBy
-    "",            // ActionDate
-    type,
-    directMgr,     // Col N
-    projectMgr,    // Col O
-    directStatus,  // Col P
-    projectStatus, // Col Q
-    initiatedBy    // Col R
-  ]);
-
-  // If Superadmin auto-approved, trigger schedule update immediately
-  if (overallStatus === 'Approved') {
-      finalizeOvertimeSchedule(ss, targetUser, requestData, submitterEmail);
-  }
-
-  return "Request submitted successfully.";
-}
-
-/**
- * ACTION: Manager Approves/Denies
- */
-function webActionOvertime(reqId, action, comment) {
-  const { userEmail: adminEmail, ss, userData } = getAuthorizedContext('MANAGE_OVERTIME');
-  const otSheet = getOrCreateSheet(ss, SHEET_NAMES.overtime);
-  
-  const data = otSheet.getDataRange().getValues();
-  let rowIdx = -1;
-  let reqRow = [];
-
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === reqId) {
-      rowIdx = i + 1;
-      reqRow = data[i];
-      break;
-    }
-  }
-  if (rowIdx === -1) throw new Error("Request not found.");
-
-  const directMgr = (reqRow[13] || "").toLowerCase();
-  const projectMgr = (reqRow[14] || "").toLowerCase();
-  const adminEmailLower = adminEmail.toLowerCase();
-  
-  // 1. Identify Role of Approver
-  let isDirect = (adminEmailLower === directMgr);
-  let isProject = (adminEmailLower === projectMgr);
-  const isSuper = (userData.userRole === 'superadmin');
-
-  // FIX: If Project Mgr is empty/missing, or same as Direct, treat Direct approval as both
-  if (isDirect && (!projectMgr || projectMgr === directMgr)) {
-      isProject = true;
-  }
-
-  if (!isDirect && !isProject && !isSuper) {
-      throw new Error("You are not authorized to approve this request.");
-  }
-
-  // 2. Handle DENY
-  if (action === 'Denied') {
-      otSheet.getRange(rowIdx, 9).setValue("Denied");
-      otSheet.getRange(rowIdx, 10).setValue(comment);
-      otSheet.getRange(rowIdx, 11).setValue(adminEmail);
-      otSheet.getRange(rowIdx, 12).setValue(new Date());
-      return "Request Denied.";
-  }
-
-  // 3. Handle APPROVE
-  // Update the specific column based on who is acting
-  if (isDirect || isSuper) otSheet.getRange(rowIdx, 16).setValue("Approved"); // DirectStatus
-  if (isProject || isSuper) otSheet.getRange(rowIdx, 17).setValue("Approved"); // ProjectStatus
-
-  // Re-read statuses to decide if we can Finalize
-  // We use the flags we just calculated + existing sheet data
-  const currentDirectStatus = (isDirect || isSuper) ? "Approved" : reqRow[15];
-  const currentProjectStatus = (isProject || isSuper) ? "Approved" : reqRow[16];
-
-  let newMainStatus = reqRow[8]; // Default to current
-
-  if (currentDirectStatus === 'Approved' && currentProjectStatus !== 'Approved') {
-      newMainStatus = "Pending Project Mgr";
-  } else if (currentDirectStatus === 'Approved' && currentProjectStatus === 'Approved') {
-      newMainStatus = "Approved";
-  }
-
-  // Update Main Status & Metadata
-  otSheet.getRange(rowIdx, 9).setValue(newMainStatus);
-  otSheet.getRange(rowIdx, 11).setValue(adminEmail); 
-  otSheet.getRange(rowIdx, 12).setValue(new Date());
-
-  // 4. Finalize if Fully Approved
-  if (newMainStatus === "Approved") {
-      const requestData = {
-          date: reqRow[3],
-          type: reqRow[12],
-          startTime: reqRow[4], // Date Obj
-          endTime: reqRow[5],   // Date Obj
-          name: reqRow[2]
-      };
-      
-      const targetUserObj = userData.userList.find(u => u.empID === reqRow[1]);
-      if (targetUserObj) {
-          finalizeOvertimeSchedule(ss, targetUserObj, requestData, adminEmail);
-          return "Request Finalized. Schedule Updated.";
-      } else {
-          return "Request Approved (Warning: User not found in DB to update schedule).";
-      }
-  }
-
-  return "Approval Recorded. Waiting for next approver.";
-}
-
-// Helper: Updates Schedule with Overnight Logic
-function finalizeOvertimeSchedule(ss, targetUser, reqData, adminEmail) {
-    const scheduleSheet = getOrCreateSheet(ss, SHEET_NAMES.schedule);
-    const logsSheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-    const targetDateStr = Utilities.formatDate(new Date(reqData.date), Session.getScriptTimeZone(), "MM/dd/yyyy");
-
-    const formatT = (d) => Utilities.formatDate(new Date(d), Session.getScriptTimeZone(), "HH:mm");
-
-    // 1. Calculate Shift Dates (Handle Overnight)
-    // If End Time is earlier than Start Time, it implies the shift ends the next day.
-    const startObj = new Date(reqData.startTime);
-    const endObj = new Date(reqData.endTime);
-    
-    let shiftEndDate = new Date(reqData.date); // Default to same day
-    if (endObj < startObj) {
-        shiftEndDate.setDate(shiftEndDate.getDate() + 1); // Next day
-    }
-
-    if (reqData.type === 'Work Day Off') {
-        updateOrAddSingleSchedule(
-            scheduleSheet, {}, logsSheet,
-            targetUser.email, targetUser.name,
-            new Date(reqData.date), shiftEndDate, // Pass correct End Date
-            targetDateStr,
-            formatT(startObj), formatT(endObj),
-            "Work Day Off", adminEmail
-        );
+    // --- FIX START ---
+    // If a specific email is selected, find that user.
+    if (selectedEmail && selectedEmail !== "") {
+        const user = allUsersList.find(u => u.email === selectedEmail);
+        targetUserName = user ? user.name : '';
     } else {
-        // Pre/Post Shift: Extend Schedule
-        const curSched = getScheduleForDate(targetUser.email, new Date(reqData.date));
-        if (curSched) {
-            let s = curSched.start;
-            let e = curSched.end;
-            
-            // If extending, we respect the NEW boundary
-            if (reqData.type === 'Pre-Shift') s = formatT(startObj);
-            if (reqData.type === 'Post-Shift') {
-                e = formatT(endObj);
-                // Recalculate shift end date based on new extended time
-                const schedStartObj = createDateTime(new Date(reqData.date), s);
-                const schedEndObj = createDateTime(new Date(reqData.date), e);
-                shiftEndDate = new Date(reqData.date);
-                if (schedEndObj < schedStartObj) shiftEndDate.setDate(shiftEndDate.getDate() + 1);
-            }
-            
-            updateOrAddSingleSchedule(
-                scheduleSheet, {}, logsSheet,
-                targetUser.email, targetUser.name,
-                new Date(reqData.date), shiftEndDate,
-                targetDateStr,
-                s, e, "Present", adminEmail
-            );
-        }
+        // If "Punch for: Myself" is showing (value is empty), use the admin's own name.
+        targetUserName = selfUserName;
     }
-}
+    // --- FIX END ---
 
-// Helper: Fetch List with Details
-function webGetOvertimeRequests(filterStatus) {
-  const { userEmail, userData, ss } = getAuthorizedContext(null);
-  const otSheet = getOrCreateSheet(ss, SHEET_NAMES.overtime);
-  const data = otSheet.getDataRange().getValues();
-  const results = [];
+  } else {
+    targetUserName = selfUserName;
+  }
   
-  const isManager = ['admin','superadmin','manager','project_manager'].includes(userData.userRole);
-  const mySubs = isManager ? new Set(webGetAllSubordinateEmails(userEmail)) : new Set();
+  if (!targetUserName) { 
+     setStatus('status', 'error', 'Could not identify the user to punch for.');
+     return;
+  }
 
-  const formatT = (val) => {
-    if (val instanceof Date) return Utilities.formatDate(val, Session.getScriptTimeZone(), "HH:mm");
-    if (typeof val === 'string' && val.includes('T')) return val.split('T')[1].substring(0,5);
-    // Try parsing if string date
-    const d = parseDate(val);
-    if (d) return Utilities.formatDate(d, Session.getScriptTimeZone(), "HH:mm");
-    return val || "";
-  };
+  // Project Logic (Keep existing Phase 3 logic)
+  const projectSelect = document.getElementById('current-project-select');
+  const projectId = projectSelect.value;
 
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    if (!row || row.length === 0) continue;
+  if ((action === 'Login' || action === 'Switch Project') && !projectId) {
+    setStatus('status', 'error', 'Please select a Project before punching.');
+    return;
+  }
 
-    const ownerID = row[1];
-    const ownerUser = userData.userList.find(u => u.empID === ownerID);
-    const ownerEmail = ownerUser ? ownerUser.email : "";
+  setStatus('status', 'processing', `Processing "${action}" for ${targetUserName}...`);
+
+  google.script.run
+    .withSuccessHandler(response => {
+      if (response.message.startsWith('Error:')) {
+        setStatus('status', 'error', response.message.replace('Error: ', ''));
+      } else {
+        setStatus('status', 'success', response.message);
+      }
+      updateCurrentStatus(response.newStatus); 
+    })
+    .withFailureHandler(err => {
+      setStatus('status', 'error', 'Unexpected error: ' + err.message);
+    })
+    .webPunch(action, targetUserName, null, projectId); 
+}
+      
+      // REPLACE this function in your <script> tag
+function toggleTimeFields() {
+  const leaveType = document.getElementById('schedule-leave-type').value;
+  const timeFields = document.getElementById('time-fields');
+  if (leaveType === 'Present') {
+    timeFields.style.display = 'flex';
+  } else {
+    timeFields.style.display = 'none';
+    // *** NEW: Clear the shift end date field when hiding ***
+    document.getElementById('schedule-end-date-shift').value = '';
+    document.getElementById('schedule-start-time').value = '';
+    document.getElementById('schedule-end-time').value = '';
+  }
+}
+      
+     // REPLACE this function in your <script> tag
+function submitSchedule() {
+  try {
+    const userEmail = document.getElementById('schedule-agent-select').value;
+    const user = allUsersList.find(u => u.email === userEmail);
+    if (!user) throw new Error("Please select a user."); 
     
-    let canView = (ownerEmail === userEmail);
-    if (!canView && isManager) {
-        if (userData.userRole === 'superadmin') canView = true;
-        else if (mySubs.has(ownerEmail)) canView = true;
+    let startDate = document.getElementById('schedule-start-date').value;
+    let endDateRange = document.getElementById('schedule-end-date').value; // This is the date *range*
+    const leaveType = document.getElementById('schedule-leave-type').value;
+    let startTime = document.getElementById('schedule-start-time').value;
+    let endTime = document.getElementById('schedule-end-time').value;
+    
+    // *** NEW: Read the SHIFT end date ***
+    let shiftEndDate = document.getElementById('schedule-end-date-shift').value;
+    
+    if (!startDate) throw new Error("Please select a Start Date.");
+    if (!endDateRange) endDateRange = startDate; // Default range to single day
+    if (new Date(endDateRange) < new Date(startDate)) throw new Error("End Date of range cannot be before Start Date.");
+    
+    if (leaveType === 'Present') {
+      if (!startTime || !endTime) throw new Error("Shift Start and End Time are required for 'Present' status.");
+      // If shiftEndDate is blank, it will be handled by the server
+    } else {
+      startTime = "";
+      endTime = "";
+      shiftEndDate = ""; // Clear shift end date if not present
     }
+    
+    setStatus('schedule-status', 'processing', `Submitting schedule for ${user.name}...`);
 
-    if (canView) {
-        const status = row[8] || "Pending";
-        
-        // Parse the ShiftDate (row[3]) safely
-        const shiftDateObj = parseDate(row[3]);
-        const shiftDateStr = shiftDateObj ? convertDateToString(shiftDateObj).split('T')[0] : "Invalid Date";
+    google.script.run
+      .withSuccessHandler(msg => {
+        if (msg.startsWith('Error:')) {
+          setStatus('schedule-status', 'error', msg.replace('Error: ', ''));
+        } else {
+          setStatus('schedule-status', 'success', msg);
+          document.getElementById('schedule-form').reset();
+          document.getElementById('schedule-start-date').valueAsDate = new Date();
+          toggleTimeFields();
+        }
+      })
+      .withFailureHandler(err => {
+        setStatus('schedule-status', 'error', 'Unexpected error: ' + (err.message || JSON.stringify(err)));
+      })
+      // *** MODIFIED: Pass shiftEndDate to the new function signature ***
+      .webSubmitScheduleRange(userEmail, user.name, startDate, endDateRange, startTime, endTime, leaveType, shiftEndDate); 
 
-        if (filterStatus === 'All' || status === filterStatus || (filterStatus === 'Pending' && status.includes('Pending'))) {
-            results.push({
-                id: row[0],
-                name: row[2],
-                date: shiftDateStr,
-                time: `${formatT(row[4])} - ${formatT(row[5])}`,
-                hours: row[6],
-                reason: row[7],
-                status: status,
-                type: row[12] || "N/A",
-                directMgr: row[13] || "",
-                projectMgr: row[14] || "",
-                directStatus: row[15] || "Pending",
-                projectStatus: row[16] || "Pending",
-                initiatedBy: row[17] || "Agent"
+  } catch (err) {
+    setStatus('schedule-status', 'error', err.message);
+  }
+}
+      
+      // --- Helper to format date strings ---
+      function formatDate(dateStr) {
+        if (!dateStr) return 'N/A';
+        return new Date(dateStr).toLocaleDateString("en-US", { 
+          year: 'numeric', month: '2-digit', day: '2-digit' 
+        });
+      }
+      
+      // --- Helper to format time strings ---
+      function formatTime(dateStr) {
+        if (!dateStr) return '--:--';
+        // Check if dateStr is a full date string or just a time part
+        if (dateStr.includes('T') || dateStr.includes('-')) {
+             return new Date(dateStr).toLocaleTimeString("en-US", { 
+              hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false 
             });
         }
-    }
-  }
-  return results.reverse();
-}
+        // If it's just a time string like "09:00:00", we can't reliably format it without assuming a date.
+        return dateStr;
+      }
+      
+      // --- Helper to format seconds ---
+      function formatSeconds(seconds) {
+        if (typeof seconds !== 'number' || isNaN(seconds)) return '0 sec';
+        if (seconds === 0) return '0 sec';
+        const isNegative = seconds < 0;
+        seconds = Math.abs(seconds);
+        
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        
+        let str = isNegative ? '-' : '';
+        if (h > 0) str += `${h}h `;
+        if (m > 0) str += `${m}m `;
+        if (s > 0 || (h === 0 && m === 0)) str += `${s}s`;
+        
+        return str.trim();
+      }
 
-/**
- * MANAGER: Approve/Deny or Pre-Approve
- */
-function webActionOvertime(reqId, action, comment, preApproveData) {
-  const { userEmail, ss } = getAuthorizedContext('MANAGE_OVERTIME');
-  const otSheet = getOrCreateSheet(ss, SHEET_NAMES.overtime);
+// ================= PHASE 2: REAL-TIME TIMERS (DUAL CLOCK) =================
+let statusTimer = null;
+
+function updateCurrentStatus(statusInfo) {
+  if (statusTimer) clearInterval(statusTimer);
+
+  const statusDiv = document.getElementById('current-status-display');
+  const timersGrid = document.getElementById('timers-grid');
   
-  // CASE 1: Pre-Approval (Creating a new Approved request)
-  if (action === 'Pre-Approve') {
-    const targetEmail = preApproveData.email;
-    const userData = getUserDataFromDb(ss);
-    const targetUser = userData.userList.find(u => u.email === targetEmail);
-    if (!targetUser) throw new Error("User not found.");
+  // Shift Timer Elements
+  const shiftTimerValue = document.getElementById('shift-timer-value');
+  const shiftStartDisplay = document.getElementById('shift-start-time');
+  
+  // Status/AUX Timer Elements
+  const statusTimerValue = document.getElementById('status-timer-value');
+  const statusLabel = document.getElementById('status-timer-label');
+  const statusNameDisplay = document.getElementById('status-current-name');
+  const statusIconBg = document.getElementById('status-icon-bg');
+
+  // Enable buttons
+  setAllPunchButtonsDisabled(false); 
+
+  // --- MODIFICATION: ALWAYS SHOW GRID ---
+  timersGrid.style.display = 'grid'; 
+
+  // Handle Empty/Initial State safely
+  if (!statusInfo) {
+      shiftTimerValue.innerText = "00:00:00";
+      statusTimerValue.innerText = "00:00:00";
+      statusNameDisplay.innerText = "Loading...";
+      return;
+  }
+
+  // --- 1. SETUP TIMESTAMPS ---
+  // Safely parse dates (handle nulls from server)
+  const lastActionTime = statusInfo.time ? new Date(statusInfo.time) : null;
+  const loginTime = statusInfo.loginTime ? new Date(statusInfo.loginTime) : null;
+  
+  let currentStatusName = statusInfo.status || "Logged Out";
+  statusNameDisplay.innerText = currentStatusName;
+
+  // Handle "Logged Out" visuals specifically
+  if (currentStatusName === 'Logged Out') {
+    statusDiv.style.visibility = 'hidden';
+    statusDiv.className = 'status-message';
+    document.title = "KOMPASS";
     
-    const schedule = getScheduleForDate(targetEmail, new Date(preApproveData.date));
-    if (!schedule) throw new Error("No schedule found for user on this date.");
-
-    const newID = `OT-PRE-${new Date().getTime()}`;
-    otSheet.appendRow([
-      newID,
-      targetUser.empID,
-      targetUser.name,
-      new Date(preApproveData.date),
-      new Date(schedule.start),
-      new Date(schedule.end),
-      preApproveData.hours,
-      "Pre-Approved by Manager",
-      "Approved",
-      comment || "Pre-approved",
-      userEmail,
-      new Date()
-    ]);
-    return "Overtime pre-approved successfully.";
+    // Reset Values for visual clarity
+    shiftTimerValue.innerText = "00:00:00";
+    shiftStartDisplay.innerText = "--:--";
+    statusTimerValue.innerText = "00:00:00";
+    
+    statusLabel.innerText = "Status";
+    statusIconBg.style.background = "#9ca3af"; // Grey
+    statusIconBg.innerHTML = "⚫";
+    
+    // We do NOT return here, so the interval clears and sets 00:00:00 ensures stability
+    return;
   }
 
-  // CASE 2: Action Existing Request
-  const data = otSheet.getDataRange().getValues();
-  let rowIndex = -1;
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === reqId) {
-      rowIndex = i + 1;
-      break;
+  // Update Login Time Display
+  if (loginTime) {
+    shiftStartDisplay.innerText = loginTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  } else {
+    shiftStartDisplay.innerText = "--:--";
+  }
+
+  // --- 2. UPDATE STATIC LABELS (For Active States) ---
+  if (currentStatusName.includes("Break") || currentStatusName.includes("Lunch")) {
+      statusLabel.innerText = "Break Duration";
+      statusIconBg.style.background = "#f59e0b"; // Orange/Yellow
+      statusIconBg.innerHTML = "☕";
+  } else if (currentStatusName === "Logged In") {
+      statusLabel.innerText = "Work Duration";
+      statusIconBg.style.background = "#10b981"; // Green
+      statusIconBg.innerHTML = "💼";
+  } else {
+      statusLabel.innerText = "AUX Duration";
+      statusIconBg.style.background = "#3b82f6"; // Blue
+      statusIconBg.innerHTML = "⚡";
+      if (currentStatusName.includes("System Down")) {
+         statusIconBg.style.background = "#dc2626"; // Red
+         statusIconBg.innerHTML = "🚨";
+      }
+  }
+
+  // --- 3. START TICKER ---
+  const updateTick = () => {
+    const now = new Date();
+    
+    // A. SHIFT TIMER CALCULATION
+    if (loginTime) {
+      const shiftDiff = Math.floor((now - loginTime) / 1000);
+      shiftTimerValue.innerText = formatHHMMSS(shiftDiff);
+    } else {
+      shiftTimerValue.innerText = "00:00:00";
     }
-  }
-  if (rowIndex === -1) throw new Error("Request not found.");
-  
-  // Update Status (Col I = 9), Comment (Col J = 10), ActionBy (Col K = 11), ActionDate
-  otSheet.getRange(rowIndex, 9).setValue(action); // Approved/Denied
-  otSheet.getRange(rowIndex, 10).setValue(comment);
-  otSheet.getRange(rowIndex, 11).setValue(userEmail);
-  otSheet.getRange(rowIndex, 12).setValue(new Date());
-  
-  return `Request ${action}.`;
-}
 
-/**
- * NEW PHASE 5: Calculates net working hours (Total Login Duration - Excess Break Time).
- * Returns decimal hours (e.g., 8.5).
- */
-function calculateNetHours(punches) {
-  if (!punches.login || !punches.logout) return 0;
+    // B. STATUS/AUX TIMER CALCULATION
+    if (lastActionTime) {
+        const statusDiff = Math.floor((now - lastActionTime) / 1000);
+        statusTimerValue.innerText = formatHHMMSS(statusDiff);
+        
+        // C. THRESHOLD ALERTS (Break Exceed)
+        let warningMsg = "";
+        let maxSeconds = 0;
+        
+        if (currentStatusName.includes("First Break") || currentStatusName.includes("Last Break")) {
+            maxSeconds = PLANNED_BREAK_SECONDS; 
+        } else if (currentStatusName.includes("Lunch")) {
+            maxSeconds = PLANNED_LUNCH_SECONDS; 
+        }
 
-  const totalDurationSec = timeDiffInSeconds(punches.login, punches.logout);
-  
-  // Helper to calculate excess
-  const getExcess = (start, end, type) => {
-    if (!start || !end) return 0;
-    const duration = timeDiffInSeconds(start, end);
-    const allowed = getBreakConfig(type).default;
-    return Math.max(0, duration - allowed);
+        if (maxSeconds > 0) {
+            if (statusDiff > maxSeconds) {
+                const exceedSec = statusDiff - maxSeconds;
+                warningMsg = `<strong>⚠️ Exceeded by ${formatCompactTime(exceedSec)}</strong>`;
+                statusTimerValue.style.color = "#dc2626"; 
+                statusDiv.className = `status-message visible status-denied`;
+                document.title = `⚠️ ${formatCompactTime(exceedSec)} Over - ${currentStatusName}`;
+            } else if (statusDiff > (maxSeconds * 0.85)) {
+                const remainSec = maxSeconds - statusDiff;
+                warningMsg = `<span style="color: #d97706;">${formatCompactTime(remainSec)} remaining</span>`;
+                statusTimerValue.style.color = "#d97706"; 
+                statusDiv.className = `status-message visible status-pending`;
+            } else {
+                const remainSec = maxSeconds - statusDiff;
+                warningMsg = `<span style="color: #10b981;">${formatCompactTime(remainSec)} remaining</span>`;
+                statusTimerValue.style.color = "var(--text-color)";
+                statusDiv.className = `status-message visible status-approved`; 
+            }
+            statusDiv.innerHTML = warningMsg;
+            statusDiv.style.visibility = 'visible';
+        } else {
+            statusTimerValue.style.color = "var(--text-color)";
+            statusDiv.style.visibility = 'hidden';
+            document.title = `KOMPASS - ${currentStatusName}`;
+        }
+    } else {
+        statusTimerValue.innerText = "00:00:00";
+    }
   };
 
-  const deduct1 = getExcess(punches.firstBreakIn, punches.firstBreakOut, "First Break");
-  const deductLunch = getExcess(punches.lunchIn, punches.lunchOut, "Lunch");
-  const deduct2 = getExcess(punches.lastBreakIn, punches.lastBreakOut, "Last Break");
-
-  const netSeconds = totalDurationSec - deduct1 - deductLunch - deduct2;
-  return (netSeconds / 3600).toFixed(2); // Return decimal hours
+  updateTick(); // Run immediately
+  statusTimer = setInterval(updateTick, 1000);
 }
 
-// ================= PHASE 6: CONFIGURATION API =================
-
-/**
- * Fetches the current break configuration for the Admin Editor.
- */
-function webGetBreakConfig() {
-  const { userEmail, userData, ss } = getAuthorizedContext('MANAGE_BALANCES'); // Reusing Admin permission
-  const sheet = getOrCreateSheet(ss, SHEET_NAMES.breakConfig);
-  const data = sheet.getDataRange().getValues();
-  
-  // Skip header row
-  const configs = [];
-  for (let i = 1; i < data.length; i++) {
-    configs.push({
-      type: data[i][0],
-      defaultDur: data[i][1], // Seconds
-      maxDur: data[i][2]      // Seconds
-    });
-  }
-  return configs;
+// --- HELPER: HH:MM:SS Formatter ---
+function formatHHMMSS(totalSeconds) {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  // Pad with zeros
+  return [h, m, s].map(v => String(v).padStart(2, '0')).join(':');
 }
 
-/**
- * Saves changes to the Break Configuration sheet.
- */
-function webSaveBreakConfig(newConfigs) {
-  const { userEmail, userData, ss } = getAuthorizedContext('MANAGE_BALANCES');
-  const sheet = getOrCreateSheet(ss, SHEET_NAMES.breakConfig);
-  const data = sheet.getDataRange().getValues();
-  
-  // newConfigs is an array of { type, defaultDur, maxDur }
-  newConfigs.forEach(conf => {
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][0] === conf.type) {
-        // Update Default (Col B) and Max (Col C)
-        sheet.getRange(i + 1, 2).setValue(Number(conf.defaultDur));
-        sheet.getRange(i + 1, 3).setValue(Number(conf.maxDur));
-        break;
-      }
-    }
-  });
-  
-  return "Break configuration updated successfully.";
+// --- HELPER: Compact Formatter (12m 30s) ---
+function formatCompactTime(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+      
+      // --- PHASE 6: Enhanced Visuals ---
+function getStatusClass(status) {
+    if (!status) return 'logged-out';
+    const s = status.toLowerCase();
+    
+    // Green: Working
+    if (s === 'logged in' || s === 'present') return 'approved'; 
+    
+    // Yellow: Breaks
+    if (s.includes('break') || s.includes('lunch') || s.includes('meeting') || s.includes('coaching')) return 'pending';
+    
+    // Red: Issues
+    if (s.includes('absent') || s.includes('sick') || s.includes('leave')) return 'denied';
+    
+    // Gray: Offline
+    if (s === 'logged out' || s === 'day off' || s === 'day-off') return 'offline'; // We will add .status-offline CSS below
+    
+    return 'pending'; // Default fallback
+}
+
+// Helper to add icons to status text
+function formatStatusWithIcon(status) {
+    if (!status) return status;
+    const s = status.toLowerCase();
+    
+    if (s === 'logged in') return '🟢 Logged In';
+    if (s.includes('first break')) return '☕ On First Break';
+    if (s.includes('last break')) return '☕ On Last Break';
+    if (s.includes('lunch')) return '🍽️ On Lunch';
+    if (s.includes('coaching')) return '🎓 Coaching';
+    if (s.includes('meeting')) return '📅 Meeting';
+    if (s === 'logged out') return '⚫ Logged Out';
+    
+    return status;
 }
 
 
-// --- 3. PHASE 5: ENTITLEMENT TEMPLATES (Financial Admin) ---
-
-function webSaveEntitlementTemplate(templateData) {
-  const { userEmail, ss } = getAuthorizedContext('MANAGE_FINANCE');
-  const sheet = getOrCreateSheet(ss, "Entitlement_Templates");
-  
-  const id = templateData.id || `TMP-${new Date().getTime()}`;
-  
-  if (templateData.id) {
-      // Update logic (simplified: delete old, add new, or find row)
-      // For simplicity in this iteration, we just append or use a find loop.
-      const data = sheet.getDataRange().getValues();
-      for(let i=1; i<data.length; i++) {
-          if(data[i][0] === id) {
-              sheet.deleteRow(i+1);
-              break;
+      function formatColoredSeconds(seconds, isPositive) {
+          if (typeof seconds !== 'number' || isNaN(seconds) || seconds === 0) {
+              return '0';
           }
+          
+          // Deviation (Tardy, Early, Exceed) is negative, Overtime is positive
+          const actualSeconds = isPositive ? seconds : Math.abs(seconds);
+          
+          const h = Math.floor(actualSeconds / 3600);
+          const m = Math.floor((actualSeconds % 3600) / 60);
+          const s = Math.floor(actualSeconds % 60);
+          
+          let str = '';
+          if (h > 0) str += `${h}h `;
+          if (m > 0) str += `${m}m `;
+          if (s > 0 || (h === 0 && m === 0)) str += `${s}s`;
+          
+          // Choose color: Red for deviation, Green for positive (Overtime)
+          const color = isPositive ? '#34a853' : '#ea4335';
+          
+          return `<span style="font-weight: 600; color: ${color};">${str.trim()}</span>`;
       }
-  }
-  
-  sheet.appendRow([
-      id,
-      templateData.name,
-      templateData.type,
-      templateData.amount,
-      templateData.currency,
-      templateData.description,
-      "Active"
-  ]);
-  
-  return "Template saved successfully.";
-}
 
-function webGetEntitlementTemplates() {
-  const { ss } = getAuthorizedContext('MANAGE_FINANCE');
-  const sheet = getOrCreateSheet(ss, "Entitlement_Templates");
-  const data = sheet.getDataRange().getValues();
-  const templates = [];
-  
-  for (let i = 1; i < data.length; i++) {
-      if (data[i][6] === 'Active') {
-          templates.push({
-              id: data[i][0],
-              name: data[i][1],
-              type: data[i][2],
-              amount: data[i][3],
-              currency: data[i][4],
-              desc: data[i][5]
-          });
+
+      function onMyRequestsFailure(error) {
+        const listDiv = document.getElementById('my-requests-list');
+        listDiv.innerHTML = `<p class="status-message error visible">Error loading requests: ${error.message || JSON.stringify(error)}</p>`;
       }
-  }
-  return templates;
-}
 
-function webApplyEntitlementTemplate(templateId, targetEmails) {
-  const { userEmail: adminEmail, ss, userData } = getAuthorizedContext('MANAGE_FINANCE');
-  
-  // 1. Get Template
-  const tmplSheet = getOrCreateSheet(ss, "Entitlement_Templates");
-  const tmplData = tmplSheet.getDataRange().getValues();
-  let template = null;
-  for(let i=1; i<tmplData.length; i++) {
-      if(tmplData[i][0] === templateId) {
-          template = { type: tmplData[i][2], amount: tmplData[i][3], currency: tmplData[i][4], desc: tmplData[i][5] };
-          break;
+      function onPendingRequestsFailure(error) {
+        // Set the status in the main 'approval-status' div, not in the list
+        setStatus('approval-status', 'error', 'Error loading requests: ' + (error.message || JSON.stringify(error)));
       }
-  }
-  if (!template) throw new Error("Template not found.");
 
-  // 2. Apply to Users
-  const finSheet = getOrCreateSheet(ss, SHEET_NAMES.financialEntitlements);
-  let count = 0;
-  
-  targetEmails.forEach(email => {
-      const user = userData.userList.find(u => u.email === email);
-      if (user) {
-          const id = `FIN-${new Date().getTime()}-${Math.floor(Math.random()*1000)}`;
-          finSheet.appendRow([
-              id,
-              user.email,
-              user.name,
-              template.type,
-              template.amount,
-              template.currency,
-              new Date(), // Due Date (Today)
-              "Pending",
-              template.desc,
-              adminEmail,
-              new Date()
-          ]);
-          count++;
+      // --- === `loadMyRequests` ---
+      function loadMyRequests() {
+        google.script.run
+          .withSuccessHandler(populateMyRequests)
+          .withFailureHandler(onMyRequestsFailure)
+          .webGetMyRequests_V2();
       }
-  });
-  
-  return `Successfully applied template to ${count} users.`;
-}
-
-// --- 4. PHASE 6: PROJECT ADMIN DASHBOARD ---
-
-function webGetProjectDashboard(projectId) {
-  const { userEmail, userData, ss } = getAuthorizedContext('MANAGE_PROJECTS'); // Project Manager Permission
-  
-  // Validate Access (User must manage this project or be Superadmin)
-  // Logic: Check if userEmail matches the project's manager in Projects sheet
-  const projSheet = getOrCreateSheet(ss, SHEET_NAMES.projects);
-  const projData = projSheet.getDataRange().getValues();
-  let projectInfo = null;
-  
-  for(let i=1; i<projData.length; i++) {
-      if(projData[i][0] === projectId) {
-          projectInfo = { id: projData[i][0], name: projData[i][1], manager: projData[i][2] };
-          break;
-      }
-  }
-  
-  if (!projectInfo) throw new Error("Project not found.");
-  if (userData.userRole !== 'superadmin' && projectInfo.manager !== userEmail) {
-      throw new Error("Permission denied. You do not manage this project.");
-  }
-
-  // 1. Calculate Stats
-  const stats = {
-      agents: 0,
-      tls: 0,
-      supers: 0,
-      total: 0
-  };
-  
-  userData.userList.forEach(u => {
-      if (u.projectManager === projectInfo.manager) { // Simple link by manager, or use ProjectID from Core if available
-          stats.total++;
-          if (u.role === 'agent') stats.agents++;
-          else if (u.role === 'manager') stats.supers++; // Assuming manager = supervisor
-          else stats.tls++; // Placeholder logic for TLs if role exists
-      }
-  });
-
-  return { info: projectInfo, stats: stats };
-}
-
-function webGetProjectRequests(projectId) {
-    const { userEmail, userData, ss } = getAuthorizedContext('MANAGE_PROJECTS');
-    // Fetch consolidated requests for all users under this project manager
-    // For simplicity, we filter by the manager's email (since ProjectID linking might be loose)
-    
-    // 1. Get Project Manager Email
-    const projSheet = getOrCreateSheet(ss, SHEET_NAMES.projects);
-    const projData = projSheet.getDataRange().getValues();
-    let pmEmail = "";
-    for(let i=1; i<projData.length; i++) {
-        if(projData[i][0] === projectId) { pmEmail = projData[i][2]; break; }
-    }
-    
-    const teamEmails = new Set();
-    userData.userList.forEach(u => {
-        if (u.projectManager === pmEmail) teamEmails.add(u.email);
-    });
-
-    const requests = [];
-    
-    // 2. Fetch Leave
-    const leaveData = getOrCreateSheet(ss, SHEET_NAMES.leaveRequests).getDataRange().getValues();
-    for(let i=1; i<leaveData.length; i++) {
-        if(teamEmails.has(leaveData[i][2])) {
-            requests.push({ type: "Leave", user: leaveData[i][3], date: convertDateToString(new Date(leaveData[i][9] || new Date())), status: leaveData[i][1] });
+      
+      // --- === `populateMyRequests` ---
+      function populateMyRequests(requests) {
+        console.log("Data for My Requests:", requests); // <-- ADD THIS LINE
+        const listDiv = document.getElementById('my-requests-list');
+        
+        if (!Array.isArray(requests)) {
+          listDiv.innerHTML = `<p class="status-message error visible">Received an invalid response from server.</p>`;
+          return;
         }
+        
+        if (requests.length === 0) {
+          listDiv.innerHTML = '<p class="text-color-secondary">You have no leave requests on file.</p>';
+          return;
+        }
+        
+        let html = '';
+        requests.reverse().forEach((req, index) => {
+          let statusClass = '';
+          if (req.status === 'Pending') statusClass = 'status-pending';
+          if (req.status === 'Approved') statusClass = 'status-approved';
+          if (req.status === 'Denied') statusClass = 'status-denied';
+          let actionHtml = '';
+          if (req.status === 'Approved' || req.status === 'Denied') {
+            actionHtml = `<p><strong>Action:</strong> ${req.status} by ${req.actionBy || 'N/A'} on ${formatDate(req.actionDate)}</p>`;
+          }
+          html += `
+            <div class="request-list-item">
+              <div class="item-details">
+                <h4>${req.leaveType} Request (ID: ${req.requestID.slice(-5)})</h4>
+                <p>
+                  <strong>Dates:</strong> ${formatDate(req.startDate)} to ${formatDate(req.endDate)}
+                  (${req.totalDays} ${req.totalDays > 1 ? 'days' : 'day'})
+                </p>
+                <p><strong>Submitted:</strong> ${formatDate(req.requestedDate)}</p>
+                ${req.reason ? `<p><strong>Reason:</strong> ${req.reason}</p>` : ''}
+                ${req.sickNoteUrl ? `<p><strong>Sick Note:</strong> <a href="${req.sickNoteUrl}" target="_blank" style="color:var(--konecta-blue); font-weight: 600;">View PDF</a></p>` : ''}
+                <p class="supervisor-info text-color-secondary"><strong>Supervisor:</strong> ${req. supervisorName || 'N/A'}</p>
+
+                ${actionHtml}
+                ${req.actionByReason ? `<p><strong>Admin Reason:</strong> ${req.actionByReason}</p>` : ''}
+
+              </div>
+              <div class="item-actions">
+                <span class="status-badge ${statusClass}">${req.status}</span>
+              </div>
+            </div>
+          `;
+        });
+        listDiv.innerHTML = html;
+      }
+      
+      // 🛑 ADD THIS NEW FUNCTION 🛑
+      function toggleSickNoteField() {
+        const leaveType = document.getElementById('leave-type').value;
+        const sickNoteGroup = document.getElementById('sick-note-upload-group');
+        const sickNoteInput = document.getElementById('sick-note-file');
+
+        if (leaveType === 'Sick') {
+          sickNoteGroup.style.display = 'block';
+          sickNoteInput.required = true;
+        } else {
+          sickNoteGroup.style.display = 'none';
+          sickNoteInput.required = false;
+          sickNoteInput.value = null; // Clear the file if they change their mind
+        }
+      }
+      
+      // 🛑 REPLACE your old submitLeaveRequest with this one 🛑
+      function submitLeaveRequest() {
+        // 1. Get all form values
+        const leaveType = document.getElementById('leave-type').value;
+        const startDate = document.getElementById('leave-start-date').value;
+        let endDate = document.getElementById('leave-end-date').value;
+        const reason = document.getElementById('leave-reason').value;
+        const fileInput = document.getElementById('sick-note-file');
+        const file = fileInput.files[0];
+
+        try {
+          // 2. Perform validation
+          if (!startDate) throw new Error("Please select a Start Date.");
+          if (!endDate) endDate = startDate; 
+          
+          if (new Date(endDate) < new Date(startDate)) {
+            throw new Error("End Date cannot be before Start Date.");
+          }
+
+          const requestObject = {
+            leaveType: leaveType,
+            startDate: startDate,
+            endDate: endDate,
+            reason: reason,
+            fileInfo: null // We'll add this next
+          };
+
+          // 3. Check if file is required
+          if (leaveType === 'Sick') {
+            if (!file) {
+              throw new Error("A PDF sick note is mandatory for sick leave.");
+            }
+            if (file.type !== 'application/pdf') {
+              throw new Error("Only .pdf files are allowed.");
+            }
+            if (file.size > 5 * 1024 * 1024) { // 5MB limit
+              throw new Error("File is too large. Maximum size is 5MB.");
+            }
+
+            // --- File is valid, read it ---
+            setStatus('leave-status', 'processing', 'Uploading PDF... This may take a moment.');
+            const reader = new FileReader();
+
+            // 4. This runs when the file is done reading
+            reader.onload = function(e) {
+              const fileData = e.target.result.split(',')[1]; // Get Base64 data
+              
+              requestObject.fileInfo = { 
+                name: file.name, 
+                type: file.type, 
+                data: fileData 
+              };
+              
+              // 5. Now call the server
+              runSubmitLeaveRequest(requestObject);
+            };
+            
+            reader.onerror = function(e) {
+              throw new Error("Error reading the file.");
+            };
+
+            // 6. Start reading the file
+            reader.readAsDataURL(file);
+
+          } else {
+            // --- No file needed, submit directly ---
+            setStatus('leave-status', 'processing', 'Submitting request...');
+            runSubmitLeaveRequest(requestObject);
+          }
+          
+        } catch (err) {
+          setStatus('leave-status', 'error', err.message);
+        }
+      }
+
+      // 🛑 ADD THIS NEW HELPER FUNCTION 🛑
+      // This function contains the google.script.run call
+      function runSubmitLeaveRequest(requestObject) {
+        google.script.run
+          .withSuccessHandler(msg => {
+            if (msg.startsWith('Error:')) { 
+              setStatus('leave-status', 'error', msg.replace('Error: ', ''));
+            } else {
+              setStatus('leave-status', 'success', msg);
+              document.getElementById('leave-form').reset();
+              document.getElementById('leave-start-date').valueAsDate = new Date();
+              toggleSickNoteField(); // This will hide and clear the file input
+              
+              loadMyRequests();
+              google.script.run.withSuccessHandler(user => {
+                populateMyBalances(user.myBalances);
+              }).getUserInfo();
+              // Refresh admin panel if open (this logic was in your original file)
+              // if (selfRole === 'admin' || selfRole === 'superadmin') {
+              //   const currentFilter = document.getElementById('filter-mine').classList.contains('active') ? 'mine' : 'all';
+              //   loadPendingRequests(currentFilter);
+              // }
+            }
+          })
+          .withFailureHandler(err => {
+            setStatus('leave-status', 'error', err.message);
+          })
+          .webSubmitLeaveRequest(requestObject, null);
+      }
+      // *** START NEW FUNCTION ***
+      function submitAdminRequest() {
+        // *** Get the button at the start ***
+        const btn = document.getElementById('header-role-request-button');
+        try {
+          const requestedRole = document.getElementById('admin-request-role').value;
+          const justification = document.getElementById('admin-request-justification').value;
+
+          if (!justification || justification.trim() === "") {
+            throw new Error("A justification is required to request a role upgrade.");
+          }
+          
+          // *** Add loading class ***
+          btn.classList.add('loading');
+          setStatus('admin-request-status', 'processing', 'Submitting request...');
+
+          google.script.run
+            .withSuccessHandler(msg => {
+              // *** Remove loading class ***
+              btn.classList.remove('loading');
+              if (msg.startsWith('Error:')) {
+                setStatus('admin-request-status', 'error', msg.replace('Error: ', ''));
+              } else {
+                // ...
+                setTimeout(hideRoleRequestModal, 2000); 
+              }
+            })
+            .withFailureHandler(err => {
+              // *** Remove loading class ***
+              btn.classList.remove('loading');
+              setStatus('admin-request-status', 'error', err.message);
+            })
+            .webRequestAdminAccess(justification, requestedRole);
+
+        } catch (err) {
+          // *** Remove loading class (if error happens before call) ***
+          btn.classList.remove('loading');
+          setStatus('admin-request-status', 'error', err.message);
+        }
+      }
+      // *** END NEW FUNCTION ***
+      
+      function loadLeaveReport() {
+          const userEmail = document.getElementById('leave-report-user').value;
+          const status = document.getElementById('leave-report-status').value;
+          
+          const filter = {
+            userEmail: userEmail, // e.g., 'email@example.com' or 'ALL_SUBORDINATES'
+            status: status // e.g., 'Pending' or 'All'
+          };
+          
+          setStatus('approval-status', 'processing', 'Loading leave requests...');
+          
+          google.script.run
+            .withSuccessHandler(populateLeaveReport)
+            .withFailureHandler(onPendingRequestsFailure) // Can reuse this handler
+            .webGetAdminLeaveRequests(filter); // New server function
+        }
+
+        function populateLeaveReport(requests) {
+  const listDiv = document.getElementById('pending-requests-list');
+  
+  if (requests.error) {
+     setStatus('approval-status', 'error', requests.error);
+     listDiv.innerHTML = ''; 
+     return;
+  }
+  if (!Array.isArray(requests) || requests.length === 0) {
+    setStatus('approval-status', 'success', 'No leave requests found for this filter.');
+    listDiv.innerHTML = '';
+    return;
+  }
+  
+  let html = '';
+  requests.sort((a, b) => new Date(b.requestedDate) - new Date(a.requestedDate));
+
+  requests.forEach(req => {
+    // 1. Dynamic Badge Color
+    let statusClass = '';
+    const s = req.status.toLowerCase();
+    if (s.includes('pending')) statusClass = 'status-pending'; // Matches "Pending", "Pending Project Mgr", etc.
+    else if (s === 'approved') statusClass = 'status-approved';
+    else if (s === 'denied') statusClass = 'status-denied';
+
+    let balanceInfo = '';
+    if (req.requesterBalance) {
+      const balanceKey = req.leaveType.toLowerCase();
+      const daysLeft = req.requesterBalance[balanceKey];
+      balanceInfo = `<p class="text-color-secondary"><strong>Balance:</strong> ${daysLeft} days</p>`;
     }
     
-    // 3. Fetch Overtime
-    const otData = getOrCreateSheet(ss, SHEET_NAMES.overtime).getDataRange().getValues();
-    for(let i=1; i<otData.length; i++) {
-        // Need to lookup user email from ID (col 1)
-        const u = userData.userList.find(x => x.empID === otData[i][1]);
-        if(u && teamEmails.has(u.email)) {
-            requests.push({ type: "Overtime", user: otData[i][2], date: convertDateToString(new Date(otData[i][3])), status: otData[i][8] });
-        }
+    let actionHtml = '';
+    
+    // 2. FIXED LOGIC: Check if status INCLUDES "Pending"
+    if (req.status.includes('Pending')) {
+       // It is waiting for approval (either Project or Direct)
+       actionHtml = `
+        <div style="margin-top: 10px;">
+          <button class="approve-btn" onclick="approveDenyRequest('${req.requestID}', 'Approved')">Approve</button>
+          <button class="deny-btn" onclick="approveDenyRequest('${req.requestID}', 'Denied')">Deny</button>
+        </div>
+        <p class="text-color-secondary" style="font-size: 0.8rem; margin-top: 5px;">Currently waiting on: <strong>${req.supervisorName}</strong></p>
+       `;
+    } else {
+       // It is finalized (Approved/Denied)
+       actionHtml = `
+        <p style="margin: 4px 0;"><strong>Action:</strong> ${req.status} by ${req.actionBy || 'N/A'}</p>
+        ${req.actionByReason ? `<p style="margin: 4px 0;"><strong>Reason:</strong> ${req.actionByReason}</p>` : ''}
+       `;
     }
 
-    return requests.slice(0, 50); // Return last 50
+    html += `
+      <div class="request-list-item">
+        <div class="item-details">
+          <h4>${req.requestedByName} - ${req.leaveType}</h4>
+          <p><strong>Dates:</strong> ${formatDate(req.startDate)} to ${formatDate(req.endDate)} (${req.totalDays} days)</p>
+          <p><strong>Submitted:</strong> ${formatDate(req.requestedDate)}</p>
+          ${req.reason ? `<p><strong>User Reason:</strong> ${req.reason}</p>` : ''}
+          ${req.sickNoteUrl ? `<p><strong>Sick Note:</strong> <a href="${req.sickNoteUrl}" target="_blank" style="color:var(--konecta-blue); font-weight: 600;">View PDF</a></p>` : ''}
+          ${balanceInfo}
+        </div>
+        <div class="item-actions" style="display:flex; flex-direction:column; align-items:flex-end;">
+          <span class="status-badge ${statusClass}">${req.status}</span>
+          ${actionHtml}
+        </div>
+      </div>
+    `;
+  });
+  listDiv.innerHTML = html;
+  setStatus('approval-status', 'success', `Successfully loaded ${requests.length} request(s).`);
 }
+      
+      // --- Admin Approve/Deny Function ---
+      function approveDenyRequest(requestID, newStatus) {
+  const reason = prompt(`(Optional) Please provide a reason for ${newStatus.toLowerCase()} this request:`);
+  // user clicked cancel
+  if (reason === null) {
+    return;
+  }
 
-// ==========================================
-// === PHASE 7: OFFBOARDING WORKFLOW ===
-// ==========================================
+  setStatus('approval-status', 'processing', `Processing request...`);
 
-/**
- * 1. Submit Resignation (Agent)
- */
-function webSubmitResignation(reason, exitDate) {
-  const { userEmail, userData, ss } = getAuthorizedContext(null);
-  const sheet = getOrCreateSheet(ss, SHEET_NAMES.offboarding);
-  
-  // Check for existing pending request
-  const data = sheet.getDataRange().getValues();
-  for(let i=1; i<data.length; i++) {
-      if(data[i][3] === userEmail && data[i][6].includes("Pending")) {
-          throw new Error("You already have a pending resignation request.");
+  google.script.run
+    .withSuccessHandler(msg => {
+      if (msg.startsWith('Error:')) { 
+        setStatus('approval-status', 'error', msg.replace('Error: ', ''));
+      } else {
+        setStatus('approval-status', 'success', msg);
       }
-  }
-
-  const user = userData.userList.find(u => u.email === userEmail);
-  const reqID = `EXIT-${new Date().getTime()}`;
-  
-  sheet.appendRow([
-      reqID,
-      user.empID,
-      user.name,
-      userEmail,
-      "Resignation",
-      reason,
-      "Pending Managers",
-      user.supervisor,
-      user.projectManager,
-      "Pending", // DirectStatus
-      "Pending", // ProjectStatus
-      "Pending", // HRStatus
-      new Date(),
-      new Date(exitDate),
-      "Agent"
-  ]);
-  
-  return "Resignation submitted. It will be reviewed by your managers and HR.";
+      // This function name will be changed in the next step
+      loadLeaveReport(); 
+    })
+    .withFailureHandler(err => {
+      setStatus('approval-status', 'error', err.message);
+    })
+    .webApproveDenyRequest(requestID, newStatus, reason); // <-- Pass the reason
 }
+      
+      // --- Load My Schedule ---
+      function loadMySchedule() {
+        setStatus('my-schedule-status', 'processing', 'Loading your schedule...');
+        document.getElementById('my-schedule-display').innerHTML = '';
 
-/**
- * 2. Submit Termination (Manager/HR)
- */
-function webSubmitTermination(targetEmail, reason, exitDate) {
-  const { userEmail: adminEmail, userData, ss } = getAuthorizedContext('OFFBOARD_EMPLOYEE'); 
-  // 'OFFBOARD_EMPLOYEE' permission is for Managers & HR
-  
-  const sheet = getOrCreateSheet(ss, SHEET_NAMES.offboarding);
-  const targetUser = userData.userList.find(u => u.email === targetEmail);
-  
-  if (!targetUser) throw new Error("User not found.");
-  
-  // Logic: Who is initiating?
-  const isHR = userData.userRole === 'superadmin' || userData.userRole === 'hr_manager'; // Assuming HR role exists or superadmin
-  
-  const reqID = `TERM-${new Date().getTime()}`;
-  const status = isHR ? "Approved" : "Pending HR"; // HR terminates immediately, Managers need HR approval
-  const hrStatus = isHR ? "Approved" : "Pending";
-  
-  sheet.appendRow([
-      reqID,
-      targetUser.empID,
-      targetUser.name,
-      targetEmail,
-      "Termination",
-      reason,
-      status,
-      targetUser.supervisor,
-      targetUser.projectManager,
-      "N/A", // DirectStatus (Bypassed)
-      "N/A", // ProjectStatus (Bypassed)
-      hrStatus,
-      new Date(),
-      new Date(exitDate),
-      `Manager: ${userData.userName}`
-  ]);
+        google.script.run
+          .withSuccessHandler(populateMySchedule)
+          .withFailureHandler(err => {
+            setStatus('my-schedule-status', 'error', err.message);
+          })
+          .webGetMySchedule();
+      }
 
-  if (isHR) {
-      // Execute Immediate Offboarding
-      executeOffboarding(ss, targetEmail, exitDate, reason);
-      return `Employee ${targetUser.name} has been terminated immediately.`;
+     // REPLACE this function in your <script> tag
+function populateMySchedule(scheduleData) {
+  const displayDiv = document.getElementById('my-schedule-display');
+  
+  if (scheduleData.error) {
+    setStatus('my-schedule-status', 'error', scheduleData.error);
+    return;
   }
   
-  return `Termination request for ${targetUser.name} submitted to HR.`;
-}
+  if (scheduleData.length === 0) {
+    setStatus('my-schedule-status', 'success', 'No schedule found for the next 7 days.');
+    return;
+  }
 
-/**
- * 3. Get Requests (For Manager/HR Dashboard)
- */
-function webGetOffboardingRequests() {
-  const { userEmail, userData, ss } = getAuthorizedContext(null);
-  const sheet = getOrCreateSheet(ss, SHEET_NAMES.offboarding);
-  const data = sheet.getDataRange().getValues();
-  const results = [];
+  setStatus('my-schedule-status', 'success', '');
+
+  let html = `
+    <table class="schedule-table">
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Date</th>
+          <th>Day</th>
+          <th>Status</th>
+          <th>Shift Start</th>
+          <th>Shift End</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  const today = new Date();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const todayStr = today.toLocaleDateString('en-US', { timeZone: timeZone });
+
+
+  scheduleData.forEach(day => {
+    const scheduleDate = new Date(day.date);
+    const scheduleDateStr = scheduleDate.toLocaleDateString('en-US', { timeZone: timeZone });
+    
+    const dayStr = scheduleDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: timeZone });
+    const dateStr = formatDate(day.date);
+    
+    let trClass = '';
+    if (scheduleDateStr === todayStr) {
+      trClass = 'day-today';
+    }
+
+    let statusClass = '';
+    // *** MODIFIED: Use new "Day Off" logic ***
+    if (day.leaveType !== 'Present' && day.leaveType !== 'Day Off') {
+      statusClass = 'status-leave'; // Red color for sick, absent, etc.
+    } else if (day.leaveType === 'Day Off') {
+      statusClass = 'status-break'; // Blue-ish color for Day Off
+    }
+
+    html += `
+      <tr class="${trClass}">
+        <td><strong>${day.userName}</strong></td>
+        <td>${dateStr}</td>
+        <td>${dayStr}</td>
+        <td class="${statusClass}">${day.leaveType}</td>
+        <td>${day.startTime || '--:--'}</td>
+        <td>${day.endTime || '--:--'}</td>
+      </tr>
+    `;
+  });
+
+  html += '</tbody></table>';
+  displayDiv.innerHTML = html;
+}
+      
+      // --- Load History Report ---
+function loadHistoryReport() {
+  const startDate = document.getElementById('history-start-date').value;
+  const endDate = document.getElementById('history-end-date').value;
   
-  const isHR = userData.userRole === 'superadmin'; 
-  const isManager = ['admin','manager','project_manager'].includes(userData.userRole);
+  let targetUserNames = [];
   
-  for(let i=1; i<data.length; i++) {
+  if (selfRole === 'admin' || selfRole === 'superadmin') {
+    // NEW: Read from the component dataset
+    const wrapper = document.getElementById('history-user-select-wrapper');
+    let selectedEmails = [];
     try {
-      const row = data[i];
-      if (!row || row.length === 0) continue; // Skip empty rows
+        selectedEmails = JSON.parse(wrapper.dataset.value || "[]");
+    } catch(e) { selectedEmails = []; }
 
-      const targetEmail = row[3];
-      const directMgr = row[7];
-      const projectMgr = row[8];
+    if (selectedEmails.length === 0) {
+      setStatus('my-history-status', 'error', 'Please select at least one user.');
+      return;
+    }
+
+    // Map emails to names
+    targetUserNames = selectedEmails.map(email => {
+      const user = allUsersList.find(u => u.email === email);
+      return user ? user.name : null;
+    }).filter(n => n);
+    
+  } else {
+    targetUserNames.push(selfUserName);
+  }
+  
+  if (!startDate || !endDate) {
+    setStatus('my-history-status', 'error', 'Please select Start and End dates.');
+    return;
+  }
+
+  setStatus('my-history-status', 'processing', `Loading history for ${targetUserNames.length} user(s)...`);
+  document.getElementById('history-report-display').innerHTML = '';
+  
+  google.script.run
+    .withSuccessHandler(data => {
+      if (data.error) {
+        setStatus('my-history-status', 'error', data.error);
+        return;
+      }
+      setStatus('my-history-status', 'success', `Found ${data.length} records.`);
+      populateHistoryReport(data);
+      window.lastHistoryData = data; // Save for export
+      document.getElementById('export-csv-btn').style.display = 'inline-block';
+    })
+    .withFailureHandler(err => setStatus('my-history-status', 'error', err.message))
+    .webGetAdherenceRange(targetUserNames, startDate, endDate);
+}
       
-      let canView = false;
-      if (isHR) canView = true;
-      if (isManager && (userEmail === directMgr || userEmail === projectMgr)) canView = true;
-      if (userEmail === targetEmail) canView = true; 
+      // REPLACE this function in your <script> tag
+function populateHistoryReport(data) {
+  const displayDiv = document.getElementById('history-report-display');
+  
+  if (!data || data.length === 0) {
+    displayDiv.innerHTML = '<p class="text-color-secondary">No adherence records found for the selected criteria.</p>';
+    return;
+  }
+
+  const formatExceed = (value, isPositive) => {
+    if (!value || value === 'No' || value === 0) return '0';
+    const seconds = parseInt(value, 10);
+    if (seconds > 0) {
+        const color = isPositive ? '#34a853' : '#ea4335';
+        return `<span style="font-weight: 600; color: ${color};">${formatSeconds(seconds)}</span>`;
+    }
+    return '0';
+  };
+
+  let html = `
+    <table class="report-table">
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Date</th>
+          <th>Status</th>
+          <th>Login</th>
+          <th>Logout</th>
+          <th>Tardy</th>
+          <th>Early Leave</th>
+          <th>Pre-Shift OT</th> <th>Post-Shift OT</th> <th>Break Exceed</th>
+          <th>Lunch Exceed</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  data.forEach(row => {
+    const totalBreakExceed = (parseInt(row.firstBreakExceed, 10) || 0) + (parseInt(row.lastBreakExceed, 10) || 0);
+    
+    // *** NEW: Style "Day Off" and "Absent" ***
+    let statusClass = '';
+    const leaveTypeLower = (row.leaveType || 'N/A').toLowerCase();
+    if (leaveTypeLower === 'absent' || leaveTypeLower === 'sick' || leaveTypeLower === 'annual' || leaveTypeLower === 'casual') {
+      statusClass = 'status-leave'; // Red
+    } else if (leaveTypeLower === 'day off') {
+      statusClass = 'status-break'; // Blue-ish
+    }
+
+    html += `
+      <tr>
+        <td>${row.userName}</td>
+        <td>${formatDate(row.date)}</td>
+        <td class="${statusClass}">${row.leaveType || 'N/A'}</td>
+        <td>${formatTime(row.login)}</td>
+        <td>${formatTime(row.logout)}</td>
+        <td>${formatExceed(row.tardy, false)}</td>
+        <td>${formatExceed(row.earlyLeave, false)}</td>
+        <td>${formatExceed(row.preShiftOvertime, true)}</td> <td>${formatExceed(row.overtime, true)}</td>
+        <td>${formatExceed(totalBreakExceed, false)}</td>
+        <td>${formatExceed(row.lunchExceed, false)}</td>
+      </tr>
+    `;
+  });
+
+  html += '</tbody></table>';
+  displayDiv.innerHTML = html;
+}
       
-      if (canView) {
-          // --- FIX: Safe Date Parsing ---
-          let exitDateStr = "N/A";
-          if (row[13]) {
-             try {
-               const d = new Date(row[13]);
-               if (!isNaN(d.getTime())) {
-                  exitDateStr = Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd");
-               }
-             } catch(e) {}
+      // --- Export to CSV ---
+      function exportHistoryToCSV() {
+        if (!lastHistoryData || lastHistoryData.length === 0) {
+          // Using a simple notification here instead of alert().
+          setStatus('my-history-status', 'error', "No data to export. Please 'View History' first.");
+          return;
+        }
+        
+        let csvContent = "data:text/csv;charset=utf-8,";
+        csvContent += "User,Date,Status,Login,Logout,Tardy (sec),Early Leave (sec),Overtime (sec),1st Break Exceed (sec),Lunch Exceed (sec),Last Break Exceed (sec)\r\n";
+        
+        lastHistoryData.forEach(data => {
+          let row = [
+            `"${data.userName}"`,
+            `"${formatDate(data.date)}"`,
+            `"${data.leaveType || 'N/A'}"`,
+            `"${formatTime(data.login)}"`,
+            `"${formatTime(data.logout)}"`,
+            data.tardy || 0,
+            data.earlyLeave || 0,
+            data.overtime || 0,
+            data.firstBreakExceed || 0,
+            data.lunchExceed || 0,
+            data.lastBreakExceed || 0
+          ].join(",");
+          csvContent += row + "\r\n";
+        });
+
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `History_Report_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(link); 
+        link.click();
+        document.body.removeChild(link);
+      }
+      
+      // --- Submit Manual Punch (FIXED PHASE 3) ---
+      function submitManualPunch() {
+        try {
+          const userEmail = document.getElementById('manual-punch-user').value;
+          const user = allUsersList.find(u => u.email === userEmail);
+          if (!user) throw new Error("Please select a user.");
+
+          const action = document.getElementById('manual-punch-action').value;
+          const date = document.getElementById('manual-punch-date').value;
+          const time = document.getElementById('manual-punch-time').value;
+          
+          // *** FIX: Get Project ID if available ***
+          // Note: We might not have a project dropdown in the Manual Punch form yet. 
+          // If not, we pass null, or we should add one to the HTML.
+          // Assuming for now we pass null to keep it simple, or fetch from the main selector if relevant.
+          // Ideally, the Admin Tools panel should have its own Project Select.
+          const projectId = null; 
+          
+          if (!action) throw new Error("Please select a punch action.");
+          if (!date) throw new Error("Please select a date.");
+          if (!time) throw new Error("Please select a time.");
+          
+          const timestamp = new Date(date + 'T' + time).toISOString();
+          
+          setStatus('manual-punch-status', 'processing', `Processing "${action}" for ${user.name}...`);
+          
+          google.script.run
+            .withSuccessHandler(msg => {
+              if (msg.message && msg.message.startsWith('Error:')) { // Handle object response
+                 setStatus('manual-punch-status', 'error', msg.message.replace('Error: ', ''));
+              } else if (typeof msg === 'string' && msg.startsWith('Error:')) {
+                 setStatus('manual-punch-status', 'error', msg.replace('Error: ', ''));
+              } else {
+                setStatus('manual-punch-status', 'success', msg.message || msg);
+                document.getElementById('manual-punch-form').reset();
+                document.getElementById('manual-punch-date').valueAsDate = new Date();
+              }
+            })
+            .withFailureHandler(err => {
+              setStatus('manual-punch-status', 'error', err.message);
+            })
+            // *** FIX: PASS 4 ARGUMENTS to match webPunch(action, target, time, project) ***
+            .webPunch(action, user.name, timestamp, projectId); 
+            
+        } catch(err) {
+          setStatus('manual-punch-status', 'error', err.message);
+        }
+      }
+      
+      // --- Submit Admin Leave Request ---
+      function submitAdminLeaveRequest() {
+        try {
+          const userEmail = document.getElementById('admin-leave-user').value;
+          const user = allUsersList.find(u => u.email === userEmail);
+          if (!user) throw new Error("Please select a user.");
+          
+          const leaveType = document.getElementById('admin-leave-type').value;
+          const startDate = document.getElementById('admin-leave-start-date').value;
+          let endDate = document.getElementById('admin-leave-end-date').value;
+          const reason = document.getElementById('admin-leave-reason').value;
+
+          if (!startDate) throw new Error("Please select a Start Date.");
+          if (!endDate) endDate = startDate; 
+          
+          if (new Date(endDate) < new Date(startDate)) {
+            throw new Error("End Date cannot be before Start Date.");
           }
-          // -----------------------------
+          
+          const requestObject = {
+            leaveType: leaveType,
+            startDate: startDate,
+            endDate: endDate,
+            reason: reason
+          };
+          
+          setStatus('admin-leave-status', 'processing', `Submitting request for ${user.name}...`);
+          
+          google.script.run
+            .withSuccessHandler(msg => {
+              if (msg.startsWith('Error:')) { 
+                setStatus('admin-leave-status', 'error', msg.replace('Error: ', ''));
+              } else {
+                setStatus('admin-leave-status', 'success', msg);
+                document.getElementById('admin-leave-form').reset();
+                document.getElementById('admin-leave-start-date').valueAsDate = new Date();
+                
+                const currentFilter = document.getElementById('filter-mine').classList.contains('active') ? 'mine' : 'all';
+                loadPendingRequests(currentFilter);
+              }
+            })
+            .withFailureHandler(err => {
+              setStatus('admin-leave-status', 'error', err.message);
+            })
+            .webSubmitLeaveRequest(requestObject, user.email);
+          
+        } catch (err) {
+          setStatus('admin-leave-status', 'error', err.message);
+        }
+      }
+      
+      // --- Submit Balance Adjustment ---
+      function submitBalanceAdjustment() {
+        try {
+          const userEmail = document.getElementById('balance-user-select').value;
+          const user = allUsersList.find(u => u.email === userEmail);
+          if (!user) throw new Error("Please select a user.");
+          
+          const leaveType = document.getElementById('balance-leave-type').value;
+          const amount = parseFloat(document.getElementById('balance-amount').value);
+          const reason = document.getElementById('balance-reason').value;
 
-          results.push({
-              id: row[0],
-              name: row[2],
-              type: row[4],
-              reason: row[5],
-              status: row[6],
-              directStatus: row[9],
-              projectStatus: row[10],
-              hrStatus: row[11],
-              exitDate: exitDateStr, // Uses the safe string
-              initiatedBy: row[14]
+          if (isNaN(amount) || amount === 0) throw new Error("Please enter a valid, non-zero amount.");
+          if (!reason) throw new Error("A reason is required for all adjustments.");
+
+          setStatus('balance-adjust-status', 'processing', `Adjusting ${leaveType} balance for ${user.name}...`);
+
+          google.script.run
+            .withSuccessHandler(msg => {
+              if (msg.startsWith('Error:')) { 
+                setStatus('balance-adjust-status', 'error', msg.replace('Error: ', ''));
+              } else {
+                setStatus('balance-adjust-status', 'success', msg);
+                document.getElementById('balance-adjustment-form').reset();
+              }
+            })
+            .withFailureHandler(err => {
+              setStatus('balance-adjust-status', 'error', err.message);
+            })
+            .webAdjustLeaveBalance(user.email, leaveType, amount, reason);
+
+        } catch (err) {
+          setStatus('balance-adjust-status', 'error', err.message);
+        }
+      }
+      
+      // --- Import Schedule CSV ---
+      function importScheduleCSV() {
+        const fileInput = document.getElementById('csv-file-input');
+        const file = fileInput.files[0];
+
+        if (!file) {
+          setStatus('csv-import-status', 'error', 'Please select a CSV file to import.');
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          const text = e.target.result;
+          const data = parseCSV(text);
+          
+          if (!data || data.length === 0) {
+            setStatus('csv-import-status', 'error', 'File is empty or invalid. Could not parse any rows.');
+            return;
+          }
+
+          const headers = data[0];
+          
+          // *** THIS IS THE FIX ***
+          // Now checks for 'agent email' (using bracket notation for the space)
+          // and 'StartDate'
+          if (!headers.Name || !headers.StartDate || !headers['agent email']) {
+            setStatus('csv-import-status', 'error', 'Invalid CSV format. Must include headers: Name, StartDate, and agent email.');
+            return;
+          }
+          // *** END OF FIX ***
+
+          setStatus('csv-import-status', 'processing', `Importing ${data.length} schedule records...`);
+
+          google.script.run
+            .withSuccessHandler(msg => {
+              if (msg.startsWith('Error:')) { 
+                setStatus('csv-import-status', 'error', msg.replace('Error: ', ''));
+              } else {
+                setStatus('csv-import-status', 'success', msg);
+                fileInput.value = '';
+              }
+            })
+            .withFailureHandler(err => {
+              setStatus('csv-import-status', 'error', err.message);
+            })
+            .webImportScheduleCSV(data);
+        };
+        
+        reader.onerror = function(e) {
+          setStatus('csv-import-status', 'error', 'Error reading file: ' + e.message);
+        };
+
+        reader.readAsText(file);
+      }
+
+      // --- Simple CSV Parser ---
+      function parseCSV(csvText) {
+        const lines = csvText.split(/\r\n|\n/).filter(line => line.trim() !== '');
+        if (lines.length < 2) return [];
+
+        const headers = lines[0].split(',').map(h => h.trim());
+        const result = [];
+
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(',').map(v => v.trim());
+          const obj = {};
+          for (let j = 0; j < headers.length; j++) {
+            obj[headers[j]] = values[j] || '';
+          }
+          result.push(obj);
+        }
+        return result;
+      }
+
+      // --- NEW: Function to download the CSV template ---
+      // --- PHASE 9: Updated CSV Template ---
+      function downloadScheduleTemplate() {
+        const headers = "Name,StartDate,ShiftStartTime,EndDate,ShiftEndTime,LeaveType,agent email,Break1Start,Break1End,LunchStart,LunchEnd,Break2Start,Break2End";
+        
+        const example1 = "John Doe,11/30/2025,09:00,11/30/2025,18:00,Present,john.doe@konecta.com,11:00,11:15,13:00,13:30,16:00,16:15";
+        const example2 = "Jane Smith,11/30/2025,,,,Sick,jane.smith@konecta.com,,,,,,";
+        const example3 = "Peter Jones,12/01/2025,14:00,12/01/2025,23:00,Present,peter.jones@konecta.com,16:00,16:15,18:00,18:30,21:00,21:15";
+        
+        const csvContent = [headers, example1, example2, example3].join("\r\n");
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        if (link.download !== undefined) { 
+          const url = URL.createObjectURL(blob);
+          link.setAttribute("href", url);
+          link.setAttribute("download", "schedule_template_v2.csv");
+          link.style.visibility = 'hidden';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+      }
+      // --- END OF NEW FUNCTION ---
+
+      // --- Dashboard Functions ---
+      
+      // History Select Functions (Kept for History Report only)
+      function getSelectedUsers(type) {
+        if (type !== 'history') return [];
+        const userEmails = Object.keys(selectedHistoryUsers);
+        if (userEmails.length === 0) {
+          return ['ALL_USERS'];
+        }
+        return userEmails;
+      }
+      
+      function toggleUserDropdown(type, event) {
+          event.stopPropagation();
+          if (type !== 'history') return;
+          const dropdown = document.getElementById(`custom-${type}-select-dropdown`);
+          const button = document.getElementById(`custom-${type}-select-button`);
+          const isVisible = dropdown.style.display === 'block';
+
+          if (isVisible) {
+              dropdown.style.display = 'none';
+              button.classList.remove('active');
+          } else {
+              document.querySelectorAll('.custom-select-dropdown').forEach(d => d.style.display = 'none');
+              document.querySelectorAll('.custom-select-button').forEach(b => b.classList.remove('active'));
+              dropdown.style.display = 'block';
+              button.classList.add('active');
+              
+              const allChecked = Object.keys(selectedHistoryUsers).length === historyUserList.length && historyUserList.length > 0;
+              const selectAllCheckbox = document.getElementById(`select-all-checkbox-${type}`);
+              if (selectAllCheckbox) selectAllCheckbox.checked = allChecked;
+          }
+      }
+
+      function selectUserItem(type, event, itemElement, userEmail, userName) {
+          event.stopPropagation();
+          if (type !== 'history') return;
+          const checkbox = itemElement.querySelector(`input[data-email="${userEmail}"]`);
+          
+          if (event.target !== checkbox && event.target.tagName !== 'LABEL') {
+              checkbox.checked = !checkbox.checked;
+          }
+          
+          const finalCheckedState = checkbox.checked;
+          const selectedState = selectedHistoryUsers;
+          
+          if (finalCheckedState) {
+              selectedState[userEmail] = userName;
+              itemElement.classList.add('selected');
+          } else {
+              delete selectedState[userEmail];
+              itemElement.classList.remove('selected');
+          }
+          
+          const allChecked = Object.keys(selectedState).length === historyUserList.length && historyUserList.length > 0;
+          const selectAllCheckbox = document.getElementById(`select-all-checkbox-${type}`);
+          if (selectAllCheckbox) {
+              selectAllCheckbox.checked = allChecked;
+          }
+
+          updateSelectButtonDisplay(type);
+      }
+
+      function toggleSelectAll(type) {
+          if (type !== 'history') return;
+          const selectAllChecked = document.getElementById(`select-all-checkbox-${type}`).checked;
+          const dropdown = document.getElementById(`custom-${type}-select-dropdown`);
+          
+          Object.keys(selectedHistoryUsers).forEach(key => delete selectedHistoryUsers[key]);
+          
+          if (selectAllChecked) {
+              allUsersList.forEach(user => {
+                  selectedHistoryUsers[user.email] = user.name;
+              });
+              dropdown.querySelectorAll('.dropdown-item').forEach(item => {
+                  item.classList.add('selected');
+                  const checkbox = item.querySelector('input[type="checkbox"]');
+                  if (checkbox && checkbox.id !== `select-all-checkbox-${type}`) checkbox.checked = true; 
+              });
+          } else {
+              dropdown.querySelectorAll('.dropdown-item').forEach(item => {
+                  item.classList.remove('selected');
+                  const checkbox = item.querySelector('input[type="checkbox"]');
+                   if (checkbox && checkbox.id !== `select-all-checkbox-${type}`) checkbox.checked = false;
+              });
+          }
+          updateSelectButtonDisplay(type);
+      }
+
+      function updateSelectButtonDisplay(type) {
+          if (type !== 'history') return;
+          const button = document.getElementById(`custom-${type}-select-button`);
+          if (!button) return;
+          
+          const count = Object.keys(selectedHistoryUsers).length;
+          
+          if (count === 0) {
+              button.textContent = 'Select Users (0 selected)';
+          } else if (count === historyUserList.length && historyUserList.length > 0) {
+              button.textContent = `All Users Selected (${count})`;
+          } else {
+              button.textContent = `Selected: ${count} user(s)`;
+          }
+      }
+      
+      // Close dropdown when clicking outside
+      document.addEventListener('click', function(event) {
+          // --- History Logic ---
+          const historyDropdown = document.getElementById('custom-history-select-dropdown');
+          const historyButton = document.getElementById('custom-history-select-button');
+          if (historyDropdown && historyButton && historyDropdown.style.display === 'block') {
+              const container = document.getElementById('history-user-select-container');
+              if (container && !container.contains(event.target)) {
+                  historyDropdown.style.display = 'none';
+                  historyButton.classList.remove('active');
+              }
+          }
+      });
+
+
+      // --- NEW HIERARCHY FUNCTIONS ---
+      
+      // Recursive function to flatten hierarchy into a list of emails
+      function flattenHierarchy(node, list = []) {
+          if (!node || !node.email) return list;
+          list.push(node.email);
+          node.subordinates.forEach(sub => flattenHierarchy(sub, list));
+          return list;
+      }
+      
+      // Function to get the current user's full hierarchy
+      function loadMyFullHierarchy() {
+          const managerEmail = allUsersList.find(u => u.name === selfUserName)?.email;
+          if (!managerEmail) {
+              setStatus('dashboard-status', 'error', "Could not find your user email.");
+              return;
+          }
+          
+          setStatus('dashboard-status', 'processing', 'Loading full subordinate team list...');
+
+          // This fetches the flattened list of all direct and indirect reports
+          google.script.run
+            .withSuccessHandler(emails => {
+                if (emails.error) {
+                    setStatus('dashboard-status', 'error', emails.error);
+                    return;
+                }
+                
+                const managerName = allUsersList.find(u => u.email === managerEmail)?.name || 'Manager';
+                
+                currentDashboardSelection = {
+                    emails: emails,
+                    name: `${managerName}'s Full Hierarchy`,
+                    isFullHierarchy: true
+                };
+                
+                // Also update the selection display to reflect the full team
+                document.getElementById('selected-user-display').textContent = currentDashboardSelection.name;
+                
+                // Deselect any node in the tree
+                document.querySelectorAll('#hierarchy-tree-view .tree-node').forEach(node => {
+                    node.classList.remove('selected');
+                });
+                
+                setStatus('dashboard-status', 'success', `Set dashboard selection to: ${currentDashboardSelection.name}`);
+                loadDashboard();
+            })
+            .withFailureHandler(err => {
+                setStatus('dashboard-status', 'error', `Failed to load full hierarchy: ${err.message}`);
+            })
+            .webGetAllSubordinateEmails(managerEmail);
+      }
+      
+      // Function to load the hierarchy tree from the server
+      function loadManagerHierarchy() {
+          const treeView = document.getElementById('hierarchy-tree-view');
+          if (selfRole === 'agent') {
+              treeView.innerHTML = `<p class="text-color-secondary">Hierarchy view available only to managers.</p>`;
+              return;
+          }
+          treeView.innerHTML = `<p class="text-color-secondary">Fetching team hierarchy...</p>`;
+
+          google.script.run
+              .withSuccessHandler(hierarchyData => {
+                  if (hierarchyData.error) {
+                      treeView.innerHTML = `<p class="status-message error visible">${hierarchyData.error}</p>`;
+                      return;
+                  }
+                  managerHierarchy = hierarchyData;
+                  // Clear the tree before rendering
+                  treeView.innerHTML = '';
+                  renderHierarchyTree(hierarchyData, treeView);
+                  
+                  // Default selection: The manager's own node, loaded as a single user.
+                  currentDashboardSelection.emails = [hierarchyData.email];
+                  currentDashboardSelection.name = hierarchyData.name;
+                  currentDashboardSelection.isFullHierarchy = false;
+                  
+                  document.getElementById('selected-user-display').textContent = hierarchyData.name;
+                  
+                  // Auto-select the root node (the manager)
+                  const rootNode = document.querySelector(`#hierarchy-tree-view [data-email="${hierarchyData.email}"]`);
+                  if (rootNode) {
+                       rootNode.classList.add('selected');
+                  }
+                  
+              })
+              .withFailureHandler(err => {
+                  treeView.innerHTML = `<p class="status-message error visible">Error loading hierarchy: ${err.message}</p>`;
+              })
+              .webGetManagerHierarchy();
+      }
+      
+      // Recursive function to render the hierarchy
+      function renderHierarchyTree(node, containerElement) {
+          if (!node || !node.name) return;
+
+          const isManager = node.role !== 'agent';
+          const hasChildren = node.subordinates && node.subordinates.length > 0;
+          const isRoot = node.depth === 0;
+          
+          // Get the role circle class
+          const roleClass = node.role || 'agent';
+
+          // 1. Create the container element for this node
+          const nodeContainer = document.createElement('div');
+          
+          // 2. Create the clickable tree node element
+          const nodeDiv = document.createElement('div');
+          nodeDiv.className = `tree-node ${isManager ? 'collapsed' : ''}`;
+          nodeDiv.setAttribute('data-email', node.email);
+          nodeDiv.setAttribute('data-role', node.role);
+          nodeDiv.setAttribute('data-has-children', hasChildren);
+          nodeDiv.onclick = (e) => handleNodeClick(e, node);
+
+          // Build the content of the node
+          nodeDiv.innerHTML = `
+              <img src="https://icons.veryicon.com/png/o/miscellaneous/cloud-services/arrow-right-13.png" class="toggle-icon" alt="Toggle">
+              <span class="tree-label">
+                  <div class="role-icon ${roleClass}"></div>
+                  ${node.name}
+                  ${isManager && !isRoot ? ` <span class="text-color-secondary">(${node.subordinates.length} reports)</span>` : ''}
+              </span>
+          `;
+          
+          nodeContainer.appendChild(nodeDiv);
+
+          // 3. Create the subordinates list container
+          if (hasChildren) {
+              const subList = document.createElement('div');
+              subList.className = 'subordinates-list';
+              subList.id = `subordinates-${node.email.replace(/[.@]/g, '-')}`;
+
+              // Recursively render children
+              node.subordinates.forEach(sub => {
+                  renderHierarchyTree(sub, subList);
+              });
+              
+              nodeContainer.appendChild(subList);
+          }
+          
+          containerElement.appendChild(nodeContainer);
+      }
+      
+      // Handles click on any node in the tree
+      function handleNodeClick(e, node) {
+          e.stopPropagation();
+          const nodeDiv = e.currentTarget;
+          const isManager = node.role !== 'agent';
+          const hasChildren = nodeDiv.getAttribute('data-has-children') === 'true';
+          
+          // 1. Handle Selection (always select the clicked user)
+          document.querySelectorAll('#hierarchy-tree-view .tree-node').forEach(n => {
+              n.classList.remove('selected');
           });
+          nodeDiv.classList.add('selected');
+          
+          // Set selection state
+          currentDashboardSelection.emails = [node.email]; // Default to single user
+          currentDashboardSelection.name = node.name;
+          currentDashboardSelection.isFullHierarchy = isManager && hasChildren;
+          
+          document.getElementById('selected-user-display').textContent = node.name;
+          
+          // 2. Handle Collapse/Expand for managers
+          if (isManager && hasChildren) {
+              const subList = document.getElementById(`subordinates-${node.email.replace(/[.@]/g, '-')}`);
+              if (subList) {
+                  const isCollapsed = nodeDiv.classList.contains('collapsed');
+                  nodeDiv.classList.toggle('collapsed');
+                  subList.style.display = isCollapsed ? 'block' : 'none';
+              }
+          }
       }
-    } catch (e) {
-      Logger.log("Error reading offboarding row " + i + ": " + e.message);
-    }
-  }
-  return results.reverse();
-}
-
-/**
- * 4. Action Request (Approve/Deny)
- */
-function webActionOffboarding(reqId, action, comment) {
-  const { userEmail, userData, ss } = getAuthorizedContext('OFFBOARD_EMPLOYEE');
-  const sheet = getOrCreateSheet(ss, SHEET_NAMES.offboarding);
-  const data = sheet.getDataRange().getValues();
-  
-  let rowIdx = -1;
-  let reqRow = [];
-  for(let i=1; i<data.length; i++) {
-      if(data[i][0] === reqId) { rowIdx = i+1; reqRow = data[i]; break; }
-  }
-  
-  if (rowIdx === -1) throw new Error("Request not found.");
-  
-  const directMgr = reqRow[7];
-  const projectMgr = reqRow[8];
-  const isHR = userData.userRole === 'superadmin';
-  const isDirect = userEmail === directMgr;
-  const isProject = userEmail === projectMgr;
-  
-  // DENY Logic
-  if (action === 'Denied') {
-      sheet.getRange(rowIdx, 7).setValue("Denied");
-      // Log who denied? ideally yes
-      return "Request Denied.";
-  }
-  
-  // APPROVE Logic
-  if (reqRow[4] === 'Resignation') {
-      if (isDirect) sheet.getRange(rowIdx, 10).setValue("Approved");
-      if (isProject) sheet.getRange(rowIdx, 11).setValue("Approved");
-      if (isHR) sheet.getRange(rowIdx, 12).setValue("Approved");
       
-      // Check status to advance
-      // We need to re-read or assume based on current action
-      const dStat = isDirect ? "Approved" : reqRow[9];
-      const pStat = isProject ? "Approved" : reqRow[10];
-      const hStat = isHR ? "Approved" : reqRow[11];
-      
-      if (dStat === 'Approved' && pStat === 'Approved' && hStat === 'Pending') {
-          sheet.getRange(rowIdx, 7).setValue("Pending HR");
-      } else if (dStat === 'Approved' && pStat === 'Approved' && hStat === 'Approved') {
-          sheet.getRange(rowIdx, 7).setValue("Approved");
-          // Finalize
-          executeOffboarding(ss, reqRow[3], reqRow[13], "Resignation Approved");
-          return "Resignation Finalized. Employee Offboarded.";
-      }
-  } else if (reqRow[4] === 'Termination') {
-      if (isHR) {
-          sheet.getRange(rowIdx, 12).setValue("Approved");
-          sheet.getRange(rowIdx, 7).setValue("Approved");
-          executeOffboarding(ss, reqRow[3], reqRow[13], "Termination Approved");
-          return "Termination Finalized.";
-      }
-  }
-  
-  return "Approval Recorded.";
-}
-
-// Helper: Execute Final Offboarding (Update Core, Log History)
-function executeOffboarding(ss, email, exitDate, reason) {
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
-    const data = dbSheet.getDataRange().getValues();
-    const userData = getUserDataFromDb(ss);
-    const row = userData.emailToRow[email];
-    
-    if (row) {
-        // Update Status (Col 27/AA based on new schema, check index)
-        // Schema: ..., ExitDate, Status
-        // Let's look up headers dynamically to be safe
-        const headers = data[0];
-        const statusIdx = headers.indexOf("Status");
-        const exitIdx = headers.indexOf("ExitDate");
+      // Reworked loadDashboard to use the new selection state
+      function loadDashboard() {
+        // Since Google Charts are not used for these visuals, we can remove the chartsLoaded check
         
-        if (statusIdx > -1) dbSheet.getRange(row, statusIdx+1).setValue("Left");
-        if (exitIdx > -1) dbSheet.getRange(row, exitIdx+1).setValue(new Date(exitDate));
-        
-        // Log History
-        const histSheet = getOrCreateSheet(ss, SHEET_NAMES.historyLogs);
-        histSheet.appendRow([
-            `HIST-${new Date().getTime()}`,
-            userData.userList.find(u=>u.email===email)?.empID,
-            new Date(),
-            "Offboarding",
-            "Active",
-            "Left"
-        ]);
-    }
-}
-
-
-// ==========================================
-// === PHASE 8: ANALYTICS & REPORTS ===
-// ==========================================
-
-/**
- * Fetches data for the Visual Dashboard (Metrics + Timeline)
- */
-function webGetAnalyticsData(filter) {
-  const { userEmail, userData, ss } = getAuthorizedContext('VIEW_FULL_DASHBOARD');
-  
-  // --- FIX: Adjust Dates to cover full day ---
-  const startDate = new Date(filter.startDate);
-  startDate.setHours(0, 0, 0, 0); // Start of Day
-  
-  const endDate = new Date(filter.endDate);
-  endDate.setHours(23, 59, 59, 999); // End of Day
-  // ------------------------------------------
-
-  const targetEmails = filter.targetEmails || []; 
-  const timeZone = Session.getScriptTimeZone();
-
-  const targetSet = new Set(targetEmails);
-  const processAll = targetSet.has('ALL');
-
-  const adherenceData = getOrCreateSheet(ss, SHEET_NAMES.adherence).getDataRange().getValues();
-  const otherCodesData = getOrCreateSheet(ss, SHEET_NAMES.otherCodes).getDataRange().getValues();
-  const scheduleSheet = getOrCreateSheet(ss, SHEET_NAMES.schedule);
-  const scheduleData = scheduleSheet.getDataRange().getValues();
-  
-  let totalScheduledMins = 0;
-  let totalWorkedMins = 0;
-  let totalShrinkageMins = 0;
-  let totalLateness = 0;
-  
-  const timeline = {};
-
-  // Build Schedule Map
-  const scheduleMap = {};
-  for (let i = 1; i < scheduleData.length; i++) {
-    const row = scheduleData[i];
-    const sEmail = (row[6] || "").toLowerCase();
-    
-    if (!processAll && !targetSet.has(sEmail)) continue;
-
-    const sDate = parseDate(row[1]);
-    if (!sEmail || !sDate) continue;
-    
-    const dateKey = Utilities.formatDate(sDate, timeZone, "yyyy-MM-dd");
-    const uniqueKey = `${sEmail}_${dateKey}`;
-    
-    const fmt = (v) => (v instanceof Date) ? Utilities.formatDate(v, timeZone, "HH:mm") : (v ? v.toString().substring(0, 5) : null);
-
-    scheduleMap[uniqueKey] = {
-      type: row[5],
-      start: fmt(row[2]), end: fmt(row[4]),
-      b1_start: fmt(row[7]), b1_end: fmt(row[8]),
-      l_start: fmt(row[9]),  l_end: fmt(row[10]),
-      b2_start: fmt(row[11]), b2_end: fmt(row[12])
-    };
-  }
-
-  const toDec = (t) => {
-    if (!t) return null;
-    const [h, m] = t.split(':').map(Number);
-    return h + (m / 60);
-  };
-
-  // Process Adherence
-  for (let i = 1; i < adherenceData.length; i++) {
-    const row = adherenceData[i];
-    const rowDate = new Date(row[0]);
-    const agentName = row[1];
-    const email = userData.nameToEmail[agentName];
-    
-    // Check Date Range (Now inclusive of time)
-    if (rowDate < startDate || rowDate > endDate) continue;
-    
-    if (!email || (!processAll && !targetSet.has(email))) continue;
-
-    const dateStr = Utilities.formatDate(rowDate, timeZone, "yyyy-MM-dd");
-    const schedKey = `${email}_${dateStr}`;
-    const sched = scheduleMap[schedKey] || { type: 'Day Off' };
-
-    if (!timeline[dateStr]) timeline[dateStr] = {};
-    if (!timeline[dateStr][agentName]) {
-      timeline[dateStr][agentName] = { events: [], flags: [], schedule: sched };
-    }
-
-    const netHours = parseFloat(row[22]) || 0;
-    totalWorkedMins += (netHours * 60);
-    const tardySec = parseFloat(row[10]) || 0;
-    totalLateness += (tardySec / 60);
-    const leaveType = (row[13] || "").toLowerCase();
-    
-    if (leaveType !== 'day off') totalScheduledMins += 540;
-    if (leaveType === 'absent' || (leaveType !== 'present' && leaveType !== 'day off' && leaveType !== '')) {
-       totalShrinkageMins += 540;
-    }
-    totalShrinkageMins += (tardySec / 60);
-
-    const formatT = (v) => (v instanceof Date) ? Utilities.formatDate(v, timeZone, "HH:mm") : null;
-    const login = formatT(row[2]);
-    const logout = formatT(row[9]);
-    
-    if (login && logout) timeline[dateStr][agentName].events.push({ type: 'Work', start: login, end: logout, label: 'Shift' });
-
-    const addBreak = (inT, outT, type, label) => {
-        const s = formatT(inT);
-        const e = formatT(outT);
-        if (s && e) {
-            timeline[dateStr][agentName].events.push({ type: type, start: s, end: e, label: label });
-            return { start: s, end: e };
+        const date = document.getElementById('dashboard-date').value;
+        if (!date) {
+           setStatus('dashboard-status', 'error', 'Please select a date for the dashboard.');
+           return;
         }
-        return null;
-    };
-
-    const actB1 = addBreak(row[3], row[4], 'Break', '1st Break');
-    const actLunch = addBreak(row[5], row[6], 'Lunch', 'Lunch');
-    const actB2 = addBreak(row[7], row[8], 'Break', 'Last Break');
-
-    if (sched.start && login && toDec(login) > toDec(sched.start) + (5/60)) {
-        timeline[dateStr][agentName].flags.push({ type: 'Lateness', time: sched.start, msg: `Late: Login at ${login}` });
-    }
-    if (sched.end && logout && toDec(logout) < toDec(sched.end) - (5/60)) {
-        timeline[dateStr][agentName].flags.push({ type: 'EarlyLeave', time: logout, msg: `Early Leave: Out at ${logout}` });
-    }
-    if (sched.type === 'Present' && !login && leaveType !== 'Sick' && leaveType !== 'Annual') {
-        timeline[dateStr][agentName].flags.push({ type: 'NoShow', time: '09:00', msg: 'No Show / Absent' });
-    }
-
-    const checkWindow = (actual, sStart, sEnd, name) => {
-        if (actual && sStart && sEnd) {
-            const actStart = toDec(actual.start);
-            const winStart = toDec(sStart);
-            const winEnd = toDec(sEnd);
-            if (actStart < winStart || actStart > winEnd) {
-                timeline[dateStr][agentName].flags.push({ type: 'Adherence', time: actual.start, msg: `${name} out of window` });
+        
+        // Final user list to send to the backend
+        let userEmailsToQuery = [];
+        let dashboardTitle = `Dashboard for ${formatDate(date)}`;
+        
+        if (currentDashboardSelection.isFullHierarchy) {
+            // Load Full Hierarchy was explicitly requested or a manager node was clicked
+            
+            // If the manager node was clicked (isFullHierarchy is true, but emails has only 1), 
+            // we must fetch the full list of reports for that single manager.
+            if (currentDashboardSelection.emails.length === 1 && currentDashboardSelection.name !== "None") {
+                 setStatus('dashboard-status', 'processing', `Loading full subordinate team for ${currentDashboardSelection.name}...`);
+                 
+                 // Synchronous call (Apps Script handles the full list generation)
+                 google.script.run
+                    .withSuccessHandler(emails => {
+                         // Update the selection state with the flattened list
+                        currentDashboardSelection.emails = emails;
+                        
+                        dashboardTitle = `Hierarchy for ${currentDashboardSelection.name} (${emails.length} users)`;
+                        document.getElementById('dashboard-title').innerText = dashboardTitle;
+                        
+                        // Proceed to fetch dashboard data with the new list
+                        fetchDashboardData(emails, date, dashboardTitle);
+                    })
+                    .withFailureHandler(err => {
+                        setStatus('dashboard-status', 'error', `Failed to load hierarchy list: ${err.message}`);
+                    })
+                    .webGetAllSubordinateEmails(currentDashboardSelection.emails[0]);
+                return;
+            } else {
+                 // Full hierarchy list was already loaded via 'Load My Full Hierarchy' button
+                 userEmailsToQuery = currentDashboardSelection.emails;
+                 dashboardTitle = currentDashboardSelection.name;
             }
+
+        } else {
+            // Single User or Saved Selection was used
+            userEmailsToQuery = currentDashboardSelection.emails;
+            dashboardTitle = `Dashboard for ${currentDashboardSelection.name} (${userEmailsToQuery.length} users)`;
         }
-    };
-    checkWindow(actB1, sched.b1_start, sched.b1_end, "1st Break");
-    checkWindow(actLunch, sched.l_start, sched.l_end, "Lunch");
-    checkWindow(actB2, sched.b2_start, sched.b2_end, "Last Break");
-  }
-
-  // Process AUX
-  for (let i = 1; i < otherCodesData.length; i++) {
-      const row = otherCodesData[i];
-      const rowDate = new Date(row[0]);
-      const agentName = row[1];
-      const email = userData.nameToEmail[agentName];
+        
+        if (userEmailsToQuery.length === 0) {
+             setStatus('dashboard-status', 'error', 'Please select a user or load a team from the hierarchy.');
+             return;
+        }
+        
+        document.getElementById('dashboard-title').innerText = dashboardTitle;
+        fetchDashboardData(userEmailsToQuery, date, dashboardTitle);
+      }
       
-      // Check Date Range (Fix)
-      if (rowDate < startDate || rowDate > endDate) continue;
+      function fetchDashboardData(userEmails, date, dashboardTitle) {
+          setStatus('dashboard-status', 'processing', `Loading data for ${userEmails.length} user(s) on ${formatDate(date)}...`);
+          
+          // Clear old data placeholders immediately to show processing
+          document.getElementById('status-agent-list').innerHTML = '<p class="text-color-secondary">Loading...</p>';
+          document.getElementById('adherence-detail-table').innerHTML = '<p class="text-color-secondary">Loading...</p>';
+          document.getElementById('pending-leave-table').innerHTML = '<p class="text-color-secondary">Loading...</p>';
+
+
+          google.script.run
+            .withSuccessHandler(data => {
+                window.lastDashboardData = data; 
+                drawDashboard(data);
+            })
+            .withFailureHandler(err => {
+              setStatus('dashboard-status', 'error', 'Server Error: ' + err.message);
+              document.getElementById('status-agent-list').innerHTML = '<p class="text-color-secondary">Error loading data.</p>'; 
+              document.getElementById('adherence-detail-table').innerHTML = '<p class="text-color-secondary">Error loading data.</p>';
+              document.getElementById('pending-leave-table').innerHTML = '<p class="text-color-secondary">Error loading data.</p>';
+            })
+            .webGetDashboardData(userEmails, date);
+      }
       
-      if (!email || (!processAll && !targetSet.has(email))) continue;
+      // Function to save the current selection (single user or team list)
+      function saveCurrentSelection() {
+          if (currentDashboardSelection.emails.length === 0) {
+              setStatus('dashboard-status', 'error', 'No user(s) currently selected to save.');
+              return;
+          }
+          
+          setStatus('dashboard-status', 'processing', 'Saving current selection as "My Team"...');
+          
+          google.script.run
+            .withSuccessHandler(msg => {
+              setStatus('dashboard-status', 'success', msg);
+            })
+            .withFailureHandler(err => {
+              setStatus('dashboard-status', 'error', err.message);
+            })
+            .webSaveMyTeam(currentDashboardSelection.emails);
+      }
       
-      const dateStr = Utilities.formatDate(rowDate, timeZone, "yyyy-MM-dd");
+      // Function to get the current list of emails from the selection state
+      function getDashboardEmailsForSave() {
+          // This function is now deprecated in favor of using the global state in saveCurrentSelection
+          return currentDashboardSelection.emails;
+      }
       
-      if (!timeline[dateStr]) timeline[dateStr] = {};
-      if (!timeline[dateStr][agentName]) timeline[dateStr][agentName] = { events: [], flags: [], schedule: {} };
+      function drawDashboard(data) {
+        if (!data || data.error) {
+          setStatus('dashboard-status', 'error', data.error || 'Failed to load dashboard data.');
+          return;
+        }
+        
+        setStatus('dashboard-status', 'success', 'Dashboard updated.');
+        
+        // --- PHASE 7: RENDER METRICS ---
+        if (data.wfmMetrics) {
+          const m = data.wfmMetrics;
+          
+          // Capacity
+          const capEl = document.getElementById('metric-capacity');
+          capEl.innerText = `${m.capacity}%`;
+          capEl.className = 'metric-value ' + (m.capacity < 50 ? 'metric-bad' : (m.capacity < 80 ? 'metric-warn' : 'metric-good'));
+          document.getElementById('metric-capacity-sub').innerText = `${m.working}/${m.scheduled} Agents`;
 
-      const formatT = (v) => (v instanceof Date) ? Utilities.formatDate(v, timeZone, "HH:mm") : null;
-      const s = formatT(row[3]);
-      const e = formatT(row[4]) || formatT(new Date()); 
+          // Adherence
+          const adhEl = document.getElementById('metric-adherence');
+          adhEl.innerText = `${m.adherence}%`;
+          adhEl.className = 'metric-value ' + (m.adherence < 85 ? 'metric-bad' : (m.adherence < 95 ? 'metric-warn' : 'metric-good'));
 
-      if (s) timeline[dateStr][agentName].events.push({ type: 'Aux', start: s, end: e, label: row[2] });
-  }
+          // Shrinkage
+          const shkEl = document.getElementById('metric-shrinkage');
+          shkEl.innerText = `${m.shrinkage}%`;
+          shkEl.className = 'metric-value ' + (m.shrinkage > 20 ? 'metric-bad' : (m.shrinkage > 10 ? 'metric-warn' : 'metric-good'));
+          document.getElementById('metric-shrinkage-sub').innerText = `${m.unavailable} Unavailable`;
+        }
+        // -------------------------------
 
-  const adherenceScore = totalScheduledMins > 0 ? ((totalWorkedMins / totalScheduledMins) * 100).toFixed(1) : 100;
-  const shrinkageScore = totalScheduledMins > 0 ? ((totalShrinkageMins / totalScheduledMins) * 100).toFixed(1) : 0;
+        // --- 1. Draw Status Agent List ---
+        const statusAgentDiv = document.getElementById('status-agent-list');
+        let statusHtml = '';
+        
+        if (!data.agentStatusList || data.agentStatusList.length === 0) {
+             statusHtml = '<p class="text-color-secondary">No user status information available.</p>';
+        } else {
+             data.agentStatusList.forEach(agent => {
+                  const statusClass = getStatusClass(agent.status);
+                  const displayStatus = formatStatusWithIcon(agent.status);
+                  statusHtml += `
+                      <div class="agent-status-item">
+                          <strong>${agent.name}</strong>
+                          <span class="status-tag status-${statusClass}">${displayStatus}</span>
+                      </div>
+                  `;
+             });
+        }
+        statusAgentDiv.innerHTML = statusHtml;
 
-  return {
-    metrics: { adherence: adherenceScore, shrinkage: shrinkageScore, latenessMins: Math.round(totalLateness), workedHours: (totalWorkedMins/60).toFixed(1) },
-    timeline: timeline
-  };
-}
+        // --- 2. Draw Adherence Detail List ---
+        const adherenceDetailDiv = document.getElementById('adherence-detail-table');
+        let adherenceHtml = '';
+        
+        if (!data.individualAdherenceMetrics || data.individualAdherenceMetrics.length === 0) {
+            adherenceHtml = '<p class="text-color-secondary">No adherence data found for selected users today.</p>';
+        } else {
+            const filteredMetrics = data.individualAdherenceMetrics.filter(user => {
+                 // Always show if scheduled, or if there is deviation
+                 return user.scheduled || user.tardy > 0 || user.earlyLeave > 0 || user.overtime > 0;
+            });
+            
+            filteredMetrics.sort((a, b) => {
+                 const aDev = a.tardy + a.earlyLeave + a.breakExceed + a.lunchExceed;
+                 const bDev = b.tardy + b.earlyLeave + b.breakExceed + b.lunchExceed;
+                 return bDev - aDev; // Highest deviation first
+            });
+            
+            filteredMetrics.forEach(user => {
+                const totalBreakExceed = (parseInt(user.breakExceed, 10) || 0) + (parseInt(user.lunchExceed, 10) || 0);
+                
+                // Traffic Light Logic for Border
+                let borderClass = 'border-left: 4px solid #16a34a;'; // Green
+                const totalDev = user.tardy + user.earlyLeave + totalBreakExceed + user.lunchExceed;
+                if (totalDev > 600) borderClass = 'border-left: 4px solid #dc2626;'; // Red (>10 mins)
+                else if (totalDev > 0) borderClass = 'border-left: 4px solid #ca8a04;'; // Yellow
 
-/**
- * Helper: Format date obj to HH:mm:ss string for timeline
- */
-function formatTime(val) {
-  if (!val) return null;
-  if (val instanceof Date) return Utilities.formatDate(val, Session.getScriptTimeZone(), "HH:mm:ss");
-  // Handle strings
-  if (typeof val === 'string' && val.includes('T')) return val.split('T')[1].substring(0,8);
-  return val.toString().substring(0,8);
-}
+                adherenceHtml += `
+                    <div class="dashboard-detail-item" style="${borderClass}">
+                        <h4 class="detail-label" style="grid-column: 1 / -1; margin: 0; padding-bottom: 5px; border-bottom: 1px solid var(--border-color); color: var(--text-color);">${user.name}</h4>
+                        
+                        <span class="detail-label">Tardy:</span>
+                        <span class="detail-value">${formatColoredSeconds(user.tardy, false)}</span>
+                        
+                        <span class="detail-label">Early Leave:</span>
+                        <span class="detail-value">${formatColoredSeconds(user.earlyLeave, false)}</span>
+                        
+                        <span class="detail-label">Break Exceed:</span>
+                        <span class="detail-value">${formatColoredSeconds(totalBreakExceed, false)}</span>
+                        
+                        <span class="detail-label">Overtime:</span>
+                        <span class="detail-value">${formatColoredSeconds(user.overtime, true)}</span>
+                    </div>
+                `;
+            });
+        }
+        adherenceDetailDiv.innerHTML = adherenceHtml;
 
-/**
- * Generates Raw Data for Payroll CSV Export
- */
-function webGetPayrollExportData(startDateStr, endDateStr, targetEmails) {
-  const { userEmail, userData, ss } = getAuthorizedContext('VIEW_FULL_DASHBOARD');
-  
-  const startDate = new Date(startDateStr);
-  startDate.setHours(0, 0, 0, 0);
-  
-  const endDate = new Date(endDateStr);
-  endDate.setHours(23, 59, 59, 999);
+        // --- 3. Draw Pending Leave List (Same as before) ---
+        const pendingLeaveDiv = document.getElementById('pending-leave-table');
+        let pendingLeaveHtml = '';
+        if (!data.pendingRequests || data.pendingRequests.length === 0) {
+             pendingLeaveHtml = '<p class="text-color-secondary">No pending leave requests.</p>';
+        } else {
+            data.pendingRequests.forEach(req => {
+                pendingLeaveHtml += `
+                    <div class="dashboard-leave-item">
+                        <div class="item-details">
+                            <h4>${req.name} - ${req.type}</h4>
+                            <p><strong>Dates:</strong> ${formatDate(req.startDate)} (${req.days} days)</p>
+                        </div>
+                         <span class="status-badge status-pending">Pending</span>
+                    </div>
+                `;
+            });
+        }
+        pendingLeaveDiv.innerHTML = pendingLeaveHtml;
+      }
 
-  const otData = getOrCreateSheet(ss, SHEET_NAMES.overtime).getDataRange().getValues();
-  const adherenceData = getOrCreateSheet(ss, SHEET_NAMES.adherence).getDataRange().getValues();
+      // --- PHASE 7: EXPORT FUNCTION ---
+      function exportDashboardCSV() {
+        if (!window.lastDashboardData) {
+          alert("No dashboard data available to export. Please load the dashboard first.");
+          return;
+        }
+        
+        const data = window.lastDashboardData;
+        const dateStr = document.getElementById('dashboard-date').value;
+        let csvContent = "data:text/csv;charset=utf-8,";
+        
+        // 1. Metrics Header
+        csvContent += `Dashboard Report for ${dateStr}\r\n`;
+        csvContent += `Adherence,${data.wfmMetrics.adherence}%\r\n`;
+        csvContent += `Capacity,${data.wfmMetrics.capacity}%\r\n`;
+        csvContent += `Shrinkage,${data.wfmMetrics.shrinkage}%\r\n\r\n`;
+        
+        // 2. Details Header
+        csvContent += "Name,Tardy (sec),Early Leave (sec),Break Exceed (sec),Lunch Exceed (sec),Overtime (sec)\r\n";
+        
+        // 3. Details Rows
+        data.individualAdherenceMetrics.forEach(user => {
+           let row = [
+             `"${user.name}"`,
+             user.tardy,
+             user.earlyLeave,
+             user.breakExceed,
+             user.lunchExceed,
+             user.overtime
+           ].join(",");
+           csvContent += row + "\r\n";
+        });
+        
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `WFM_Dashboard_${dateStr}.csv`);
+        document.body.appendChild(link); 
+        link.click();
+        document.body.removeChild(link);
+      }
+      
+      // Function to get the current list of emails from the selection state
+      function saveMyTeam() {
+        const selectedUsers = currentDashboardSelection.emails;
+        
+        if (selectedUsers.length === 0) {
+          setStatus('dashboard-status', 'error', 'No specific users selected to save as your team.');
+          return;
+        }
+        
+        setStatus('dashboard-status', 'processing', 'Saving current selection as "My Team"...');
+        
+        google.script.run
+          .withSuccessHandler(msg => {
+            setStatus('dashboard-status', 'success', msg);
+          })
+          .withFailureHandler(err => {
+            setStatus('dashboard-status', 'error', err.message);
+          })
+          .webSaveMyTeam(selectedUsers);
+      }
+      
+      function loadMyTeam(autoLoadDashboard = false) { 
+        setStatus('dashboard-status', 'processing', 'Loading "My Team"...');
+        
+        google.script.run
+          .withSuccessHandler(teamEmails => {
+            
+            // Deselect all nodes in the tree
+            document.querySelectorAll('#hierarchy-tree-view .tree-node').forEach(node => {
+                node.classList.remove('selected');
+            });
 
-  // Normalize target list
-  const emailList = Array.isArray(targetEmails) ? targetEmails : [targetEmails];
-  const targetSet = new Set(emailList.map(e => e.toLowerCase().trim()));
-  const processAll = targetSet.has('all');
+            if (teamEmails && teamEmails.length > 0) {
+                const teamNames = teamEmails.map(email => {
+                    const user = allUsersList.find(u => u.email === email);
+                    return user ? user.name : null;
+                }).filter(name => name);
+                
+                // Select the first node that is part of the saved team, just for visual feedback
+                if(teamEmails[0]) {
+                     const firstNode = document.querySelector(`#hierarchy-tree-view [data-email="${teamEmails[0]}"]`);
+                     if (firstNode) firstNode.classList.add('selected');
+                }
+                
+                currentDashboardSelection = {
+                    emails: teamEmails,
+                    name: `Saved Team (${teamEmails.length} users)`,
+                    isFullHierarchy: false
+                };
+                
+                document.getElementById('selected-user-display').textContent = currentDashboardSelection.name;
+                setStatus('dashboard-status', 'success', 'Loaded "My Team". Click "Load Dashboard" to view.');
+            } else {
+                 currentDashboardSelection = { emails: [], name: "None", isFullHierarchy: false };
+                 document.getElementById('selected-user-display').textContent = 'None';
+                 setStatus('dashboard-status', 'success', 'No "My Team" saved. Select a user/team and click "Load Dashboard".');
+            }
+            
+            if (autoLoadDashboard) {
+              loadDashboard();
+            }
+          })
+          .withFailureHandler(err => {
+            setStatus('dashboard-status', 'error', err.message);
+            if (autoLoadDashboard) {
+              loadDashboard();
+            }
+          })
+          .webGetMyTeam();
+      }
 
-  const exportRows = [];
-
-  for (let i = 1; i < adherenceData.length; i++) {
-    const row = adherenceData[i];
+ // [index.html] UPDATED: Handle "Keep" vs "Change" robustly
+function submitMovementRequest() {
+  try {
+    const userEmail = document.getElementById('reporting-line-user').value;
+    const newSupervisorEmail = document.getElementById('reporting-line-supervisor').value;
     
-    // 1. Robust Date Parsing (Handles DD/MM/YYYY strings and Date objects)
-    const rowDate = parseDate(row[0]); 
-    if (!rowDate) continue; // Skip invalid dates
+    if (!userEmail) throw new Error("Please select a user to move.");
+    if (!newSupervisorEmail) throw new Error("Please select a new Direct Manager.");
+    if (userEmail === newSupervisorEmail) throw new Error("A user cannot be their own supervisor.");
 
-    // 2. Date Filter
-    if (rowDate < startDate || rowDate > endDate) continue;
-
-    // 3. User Filter
-    const agentName = (row[1] || "").toString().trim();
-    // Try map lookup, fallback to raw check if name mismatch
-    let email = userData.nameToEmail[agentName]; 
-    if (!email) {
-       // Fallback: Try finding user by name in the userList directly if nameToEmail failed
-       const u = userData.userList.find(u => u.name.toLowerCase() === agentName.toLowerCase());
-       if (u) email = u.email;
+    // Logic for Project Manager
+    let finalPMEmail = "";
+    
+    // Check if the radio buttons exist (safety check)
+    const pmRadio = document.querySelector('input[name="pm-action"]:checked');
+    const pmAction = pmRadio ? pmRadio.value : 'keep'; // Default to keep if hidden
+    
+    if (pmAction === 'keep') {
+       const displayEl = document.getElementById('current-pm-display');
+       finalPMEmail = displayEl.dataset.email;
+       
+       // FIX: If "Keep" is selected but the user HAS NO PM, force selection
+       if (!finalPMEmail || finalPMEmail === "undefined" || finalPMEmail === "null" || finalPMEmail === "") {
+           alert("This user currently has no Project Manager assigned. Please select 'Change' and assign one.");
+           return; 
+       }
+    } else {
+       finalPMEmail = document.getElementById('reporting-line-pm').value;
+       if (!finalPMEmail) throw new Error("Please select the new Project Manager from the dropdown.");
     }
 
-    if (!email) continue;
-    if (!processAll && !targetSet.has(email.toLowerCase())) continue;
+    setStatus('movement-request-status', 'processing', 'Submitting movement request...');
 
-    // 4. Overtime Lookup
-    let approvedOTHours = 0;
-    let otType = "";
-    const dateStr = Utilities.formatDate(rowDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
-    
-    for(let j=1; j<otData.length; j++) {
-        const otEmpID = otData[j][1];
-        // Match by Employee ID (more reliable than email)
-        const otUser = userData.userList.find(u => u.empID === otEmpID);
-        if(otUser && otUser.email.toLowerCase() === email.toLowerCase()) {
-            const otDate = parseDate(otData[j][3]); // Robust parse for OT too
-            if (otDate) {
-               const otDateStr = Utilities.formatDate(otDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
-               if (otDateStr === dateStr && otData[j][8] === 'Approved') {
-                   approvedOTHours += parseFloat(otData[j][6] || 0);
-                   otType = otData[j][12];
+    google.script.run
+      .withSuccessHandler(msg => {
+        // If it was auto-approved (Superadmin) or pending (Admin), show the message
+        setStatus('movement-request-status', 'success', msg);
+        
+        // Reset form
+        document.getElementById('reporting-line-form').reset();
+        document.getElementById('pm-change-section').style.display = 'none';
+        
+        // Refresh the pending list (in case it was pending, it appears; in case approved, it won't)
+        loadPendingMovements();
+      })
+      .withFailureHandler(err => {
+        setStatus('movement-request-status', 'error', err.message);
+      })
+      .webSubmitMovementRequest(userEmail, newSupervisorEmail, finalPMEmail);
+
+  } catch (err) {
+    setStatus('movement-request-status', 'error', err.message);
+  }
+}
+
+      // --- NEW: Load Pending Movements ---
+      function loadPendingMovements() {
+        const listDiv = document.getElementById('pending-movements-list');
+        listDiv.innerHTML = '<p class="text-color-secondary">Loading pending approvals...</p>';
+        setStatus('movement-approval-status', '', ''); // Clear status
+
+        google.script.run
+          .withSuccessHandler(requests => {
+            if (requests.error) {
+              listDiv.innerHTML = `<p class="status-message error visible">${requests.error}</p>`;
+              return;
+            }
+            if (requests.length === 0) {
+              listDiv.innerHTML = '<p class="text-color-secondary">No pending approvals found.</p>';
+              return;
+            }
+
+            let html = '';
+            requests.forEach(req => {
+              html += `
+                <div class="request-list-item">
+                  <div class="item-details">
+                    <h4>Move: ${req.userToMoveName}</h4>
+                    <p><strong>From:</strong> ${req.fromSupervisorName}</p>
+                    <p><strong>To:</strong> ${req.toSupervisorName}</p>
+                    <p class="text-color-secondary" style="font-size: 0.85rem;">Requested by ${req.requestedByName} on ${formatDate(req.requestedDate)}</p>
+                  </div>
+                  <div class="item-actions">
+                    <button class="approve-btn" onclick="handleMovementApproval('${req.movementID}', 'Approved')">Approve</button>
+                    <button class="deny-btn" onclick="handleMovementApproval('${req.movementID}', 'Denied')">Deny</button>
+                  </div>
+                </div>
+              `;
+            });
+            listDiv.innerHTML = html;
+          })
+          .withFailureHandler(err => {
+            listDiv.innerHTML = `<p class="status-message error visible">Error loading approvals: ${err.message}</p>`;
+          })
+          .webGetPendingMovements();
+      }
+
+      // --- NEW: Handle Movement Approval ---
+      function handleMovementApproval(movementID, newStatus) {
+        setStatus('movement-approval-status', 'processing', 'Processing request...');
+
+        google.script.run
+          .withSuccessHandler(result => {
+            if (result.error) {
+              setStatus('movement-approval-status', 'error', result.error);
+            } else {
+              setStatus('movement-approval-status', 'success', result.message);
+              loadPendingMovements(); // Refresh the list
+            }
+          })
+          .withFailureHandler(err => {
+            setStatus('movement-approval-status', 'error', err.message);
+          })
+          .webApproveDenyMovement(movementID, newStatus);
+      }
+
+      // --- NEW: Load Movement History ---
+      function loadMovementHistory() {
+        const listDiv = document.getElementById('movement-history-list');
+        const userEmail = document.getElementById('movement-history-user').value;
+        
+        if (!userEmail) {
+          setStatus('movement-history-status', 'error', 'Please select a user to view their history.');
+          return;
+        }
+
+        listDiv.innerHTML = '<p class="text-color-secondary">Loading history...</p>';
+        setStatus('movement-history-status', 'processing', 'Loading history...');
+
+        google.script.run
+          .withSuccessHandler(history => {
+            if (history.error) {
+              setStatus('movement-history-status', 'error', history.error);
+              listDiv.innerHTML = '';
+              return;
+            }
+            if (history.length === 0) {
+              setStatus('movement-history-status', 'success', 'No movement history found for this user.');
+              listDiv.innerHTML = '';
+              return;
+            }
+
+            let html = '';
+            history.forEach(item => {
+              let statusClass = '';
+              if (item.status === 'Pending') statusClass = 'status-pending';
+              if (item.status === 'Approved') statusClass = 'status-approved';
+              if (item.status === 'Denied') statusClass = 'status-denied';
+
+              html += `
+                <div class="request-list-item">
+                  <div class="item-details">
+                    <p><strong>From:</strong> ${item.fromSupervisorName}</p>
+                    <p><strong>To:</strong> ${item.toSupervisorName}</p>
+                    <p class="text-color-secondary">Requested: ${formatDate(item.requestDate)} by ${item.requestedByName}</p>
+                    ${item.status !== 'Pending' ? `
+                      <p class="text-color-secondary" style="font-size: 0.9rem;">
+                        <strong>Action:</strong> ${formatDate(item.actionDate)} by ${item.actionByName}
+                      </p>
+                    ` : ''}
+                  </div>
+                  <div class="item-actions">
+                    <span class="status-badge ${statusClass}">${item.status}</span>
+                  </div>
+                </div>
+              `;
+            });
+            listDiv.innerHTML = html;
+            setStatus('movement-history-status', 'success', `Loaded ${history.length} records.`);
+          })
+          .withFailureHandler(err => {
+            setStatus('movement-history-status', 'error', err.message);
+            listDiv.innerHTML = '';
+          })
+          .webGetMovementHistory(userEmail);
+      }
+
+      // --- NEW: Coaching Functions ---
+
+     
+      
+      const scoreOptions = [
+        { text: "-- Select Score --", value: "null" },
+        { text: "Got It (100%)", value: "1" },
+        { text: "Getting There or Could be Better (50%)", value: "0.5" },
+        { text: "Missed It (0%)", value: "0" }
+      ];
+
+      // *** NEW: Store last coaching data for export ***
+      let lastCoachingData = [];
+
+      /**
+       * Calculates ISO week number.
+       */
+      function getWeekNumber(d) {
+        d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+        d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay()||7));
+        var yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+        var weekNo = Math.ceil(( ( (d - yearStart) / 86400000) + 1)/7);
+        return weekNo;
+      }
+
+      /**
+       * Updates the week number input when the date changes.
+       */
+      function updateWeekNumber() {
+        const dateInput = document.getElementById('coaching-session-date');
+        const weekInput = document.getElementById('coaching-week-number');
+        if (dateInput.value) {
+          const date = new Date(dateInput.value);
+          // Adjust for local timezone offset to get correct UTC date for week calculation
+          const userTimezoneOffset = date.getTimezoneOffset() * 60000;
+          const adjustedDate = new Date(date.getTime() + userTimezoneOffset);
+          weekInput.value = 'Week ' + getWeekNumber(adjustedDate);
+        } else {
+          weekInput.value = '';
+        }
+      }
+
+      /**
+       * NEW: Dynamically builds the QA form from template data.
+       */
+      function populateCoachingForm(categories) {
+        const formDiv = document.getElementById('quality-score-form');
+        if (!formDiv) return;
+        
+        // Check for error or empty
+        if (!categories || categories.length === 0) {
+          formDiv.innerHTML = `<p class="status-message error visible">Could not load criteria for this template. Please check the 'CoachingTemplates' sheet.</p>`;
+          calculateOverallScore(); // Reset score to N/A
+          return;
+        }
+        
+        let html = '';
+        categories.forEach((cat, catIndex) => {
+          html += `<div class="qa-category"><h4>${cat.category}</h4>`;
+          
+          cat.criteria.forEach((crit, critIndex) => {
+            // We use the same ID structure as before so calculateOverallScore()
+            // and submitNewCoaching() still work perfectly.
+            html += `
+              <div class="qa-criterion">
+                <p>${crit}</p>
+                <div class="qa-criterion-inputs">
+                  <select id="qa-score-${catIndex}-${critIndex}" onchange="calculateOverallScore()">
+                    ${scoreOptions.map(opt => `<option value="${opt.value}">${opt.text}</option>`).join('')}
+                  </select>
+                  <textarea id="qa-comment-${catIndex}-${critIndex}" placeholder="Enter comments..."></textarea>
+                </div>
+              </div>
+            `;
+          });
+          html += `</div>`;
+        });
+        formDiv.innerHTML = html;
+        calculateOverallScore(); // Recalculate (which resets it)
+      }
+
+
+      /**
+       * (REPLACED)
+       * Calculates and displays the overall QA score by reading the dynamic form.
+       */
+      function calculateOverallScore() {
+        let totalScore = 0;
+        let totalPossible = 0;
+        
+        // Find all score <select> elements in the dynamic form
+        const scoreSelects = document.querySelectorAll('#quality-score-form select[id^="qa-score-"]');
+        
+        scoreSelects.forEach(select => {
+          if (select.value !== "null") {
+            totalScore += parseFloat(select.value);
+            totalPossible += 1; // Each item is worth 1 point max
+          }
+        });
+        
+        const scoreSpan = document.getElementById('coaching-overall-score');
+        if (totalPossible === 0) {
+          scoreSpan.textContent = 'N/A';
+          return { score: 0, possible: 0, percentage: 0 };
+        } else {
+          const percentage = (totalScore / totalPossible) * 100;
+          scoreSpan.textContent = `${percentage.toFixed(2)}%`;
+          return { score: totalScore, possible: totalPossible, percentage: percentage };
+        }
+      }
+
+      /**
+ * LOAD COACHING TAB
+ * 1. Fetches History
+ * 2. Fetches Correct Hierarchy for Dropdown
+ */
+function loadMyCoaching() {
+  setStatus('coaching-list-status', 'processing', 'Loading coaching data...');
+  document.getElementById('export-coaching-btn').style.display = 'none';
+  lastCoachingData = [];
+  
+  // 1. Load History (Existing Logic)
+  google.script.run
+    .withSuccessHandler(populateMyCoaching)
+    .withFailureHandler(err => {
+      setStatus('coaching-list-status', 'error', err.message);
+    })
+    .webGetCoachingHistory(null);
+
+  // 2. Load Dropdown (Hierarchy Aware) & SHOW FORM
+  if (selfRole === 'admin' || selfRole === 'superadmin' || selfRole === 'manager' || selfRole === 'project_manager') {
+      const dropdownContainer = document.getElementById('coaching-agent-select-container');
+      if (dropdownContainer) {
+          dropdownContainer.innerHTML = '<span style="font-size:0.8rem; color:#666;">Loading team...</span>';
+          
+          google.script.run
+            .withSuccessHandler(users => {
+               if (users.length === 0) {
+                   dropdownContainer.innerHTML = '<span style="font-size:0.8rem; color:#666;">No subordinates found.</span>';
+               } else {
+                   populateAdminDropdown(users, selfUserName, 'coaching-agent-select', 'Select User to Coach');
+                   
+                   // *** ADD THIS LINE TO UNHIDE THE FORM ***
+                   document.getElementById('coaching-form-container').style.display = 'block';
                }
-            }
+            })
+            .withFailureHandler(err => {
+               console.error("Failed to load coaching targets", err);
+               dropdownContainer.innerHTML = '<span style="color:red;">Error loading team</span>';
+            })
+            .webGetCoachableUsers();
+      }
+  }
+}
+
+      /**
+       * Renders the list of past coaching sessions.
+       */
+      function populateMyCoaching(sessions) {
+        const listDiv = document.getElementById('coaching-list');
+        if (sessions.error) {
+          listDiv.innerHTML = `<p class="status-message error visible">${sessions.error}</p>`;
+          setStatus('coaching-list-status', '', '');
+          return;
         }
+        if (!sessions || sessions.length === 0) {
+          listDiv.innerHTML = '<p class="text-color-secondary">No coaching history found.</p>';
+          setStatus('coaching-list-status', '', '');
+          return;
+        }
+        
+        // *** NEW: Store data for export and show button ***
+        lastCoachingData = sessions;
+        document.getElementById('export-coaching-btn').style.display = 'inline-block';
+        
+        let html = '';
+        // Sort by session date, newest first
+        sessions.sort((a, b) => new Date(b.sessionDate) - new Date(a.sessionDate));
+        
+        sessions.forEach(session => {
+          let scoreDisplay = 'N/A';
+          if (session.overallScore) {
+             scoreDisplay = `${parseFloat(session.overallScore).toFixed(2)}%`;
+          }
+          
+          let fuDate = session.followUpDate ? formatDate(session.followUpDate) : 'N/A';
+          let fuStatus = session.followUpStatus || '';
+          let fuHtml = '';
+
+          // *** NEW: Better Follow-up Status Display ***
+          if (fuStatus === 'Pending') {
+            fuHtml = `<p><strong>Follow-up:</strong> <span class="status-badge status-pending" style="margin-top:0;">Pending (${fuDate})</span></p>`;
+          } else if (fuStatus === 'Completed') {
+            fuHtml = `<p><strong>Follow-up:</strong> <span class="status-badge status-approved" style="margin-top:0;">Completed (${fuDate})</span></p>`;
+          } else if (fuStatus) { // e.g., "Postponed"
+            fuHtml = `<p><strong>Follow-up:</strong> <span class="status-badge status-processing" style="margin-top:0;">${fuStatus} (${fuDate})</span></p>`;
+          }
+          // ********************************************
+
+          // *** THIS IS THE SINGLE, CORRECTED BLOCK FOR THE BADGE ***
+          let ackHtml = '';
+          if (session.agentAcknowledgementTimestamp) {
+            ackHtml = `<span class="status-badge status-approved" style="margin-left: 10px; font-size: 0.75rem; padding: 4px 8px;">Acknowledged</span>`;
+          }
+          // *** THE DUPLICATE BLOCK THAT WAS HERE IS NOW REMOVED ***
+
+          html += `
+            <div class="request-list-item">
+              <div class="item-details">
+                <h4>${session.agentName} - ${formatDate(session.sessionDate)} (${session.weekNumber}) ${ackHtml}</h4>
+                <p><strong>Coach:</strong> ${session.coachName}</p>
+                <p><strong>Overall Score:</strong> <strong style="color:var(--konecta-dark);">${scoreDisplay}</strong></p>
+                ${session.followUpComment ?
+                  `<p><strong>Comments:</strong> ${session.followUpComment}</p>` : ''}
+                ${fuHtml} </div>
+              <div class="item-actions">
+                 <button type="button" class="view-btn" style="background-color: var(--konecta-blue); min-width: 120px;" 
+                         onclick="showCoachingDetails('${session.sessionID}')">View Details</button>
+              </div>
+            </div>
+          `;
+        });
+        
+        listDiv.innerHTML = html;
+        setStatus('coaching-list-status', '', ''); // Clear loading message
+      }
+      
+      /**
+       * *** NEW: Export Coaching History (Summary) ***
+       */
+      function exportCoachingHistory() {
+        if (!lastCoachingData || lastCoachingData.length === 0) {
+          setStatus('coaching-list-status', 'error', "No data to export.");
+          return;
+        }
+        
+        let csvContent = "data:text/csv;charset=utf-8,";
+        csvContent += "SessionID,AgentName,CoachName,SessionDate,WeekNumber,OverallScore,FollowUpComment,FollowUpDate,FollowUpStatus\r\n";
+        
+        lastCoachingData.forEach(session => {
+          // Escape commas and quotes in comments
+          const comment = `"${(session.followUpComment || "").replace(/"/g, '""')}"`;
+          
+          let row = [
+            session.sessionID,
+            session.agentName,
+            session.coachName,
+            formatDate(session.sessionDate),
+            session.weekNumber,
+            session.overallScore || 'N/A',
+            comment,
+            session.followUpDate ? formatDate(session.followUpDate) : 'N/A',
+            session.followUpStatus || 'N/A'
+          ].join(",");
+          csvContent += row + "\r\n";
+        });
+
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `Coaching_History_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(link); 
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      /**
+       * NEW: Loads the list of active template names into the dropdown.
+       */
+      function loadTemplateList() {
+        const templateSelect = document.getElementById('coaching-template-select');
+        
+        google.script.run
+          .withSuccessHandler(templates => {
+            if (templates.error) {
+              console.error(templates.error);
+              return;
+            }
+            
+            // Clear all but the first option
+            while (templateSelect.options.length > 1) {
+              templateSelect.remove(1);
+            }
+            
+            templates.forEach(templateName => {
+              const option = document.createElement('option');
+              option.value = templateName;
+              option.textContent = templateName;
+              templateSelect.appendChild(option);
+            });
+            
+          })
+          .withFailureHandler(err => {
+            console.error("Failed to load templates: " + err.message);
+          })
+          .webGetActiveTemplates();
+      }
+
+      /**
+       * NEW: Triggered by the template dropdown. Fetches criteria and builds form.
+       */
+      function loadCoachingForm() {
+        const templateName = document.getElementById('coaching-template-select').value;
+        const formDiv = document.getElementById('quality-score-form');
+        
+        if (!templateName) {
+          formDiv.innerHTML = ''; // Clear the form
+          calculateOverallScore(); // Reset score
+          return;
+        }
+
+        formDiv.innerHTML = '<p class="text-color-secondary">Loading coaching form...</p>';
+        
+        google.script.run
+          .withSuccessHandler(populateCoachingForm) // Re-use our new function
+          .withFailureHandler(err => {
+            formDiv.innerHTML = `<p class="status-message error visible">Error: ${err.message}</p>`;
+          })
+          .webGetTemplateCriteria(templateName);
+      }
+
+      /**
+       * (REPLACED)
+       * Submits the new coaching session form by reading the dynamic form.
+       */
+      function submitNewCoaching() {
+        try {
+          // Get user data
+          const agentSelect = document.getElementById('coaching-agent-select');
+          const selectedEmail = agentSelect.value;
+          if (!selectedEmail) throw new Error("Please select an agent.");
+          
+          const templateName = document.getElementById('coaching-template-select').value;
+          if (!templateName) throw new Error("Please select a coaching template.");
+          
+          const sessionDate = document.getElementById('coaching-session-date').value;
+          if (!sessionDate) throw new Error("Please select a session date.");
+          
+          const weekNumber = document.getElementById('coaching-week-number').value;
+          const followUpComment = document.getElementById('coaching-follow-up').value;
+          const followUpDate = document.getElementById('coaching-follow-up-date').value;
+
+          // Gather scores by reading the dynamic form
+          const scores = [];
+          // Find all category blocks
+          const categoryBlocks = document.querySelectorAll('#quality-score-form .qa-category');
+          
+          categoryBlocks.forEach((catBlock, catIndex) => {
+            const categoryName = catBlock.querySelector('h4').textContent;
+            
+            // Find all criteria within this category
+            const criteriaBlocks = catBlock.querySelectorAll('.qa-criterion');
+            
+            criteriaBlocks.forEach((critBlock, critIndex) => {
+              const criteriaName = critBlock.querySelector('p').textContent;
+              const score = document.getElementById(`qa-score-${catIndex}-${critIndex}`).value;
+              const comment = document.getElementById(`qa-comment-${catIndex}-${critIndex}`).value;
+              
+              // Only save if a score was selected
+              if (score !== "null") {
+                scores.push({
+                  category: categoryName,
+                  criteria: criteriaName,
+                  score: parseFloat(score),
+                  comment: comment
+                });
+              }
+            });
+          });
+          
+          // Calculate final score
+          const { percentage } = calculateOverallScore();
+          
+          const sessionObject = {
+            agentEmail: selectedEmail,
+            sessionDate: sessionDate,
+            weekNumber: weekNumber,
+            scores: scores,
+            followUpComment: followUpComment,
+            overallScore: percentage,
+            followUpDate: followUpDate || null 
+          };
+          
+          setStatus('coaching-submit-status', 'processing', `Saving session for ${agentSelect.options[agentSelect.selectedIndex].text}...`);
+          
+          google.script.run
+            .withSuccessHandler(msg => {
+              if (msg.startsWith('Error:')) {
+                setStatus('coaching-submit-status', 'error', msg.replace('Error: ', ''));
+              } else {
+                setStatus('coaching-submit-status', 'success', msg);
+                
+                // Reset form
+                document.getElementById('coaching-agent-select').selectedIndex = 0;
+                document.getElementById('coaching-template-select').selectedIndex = 0;
+                document.getElementById('coaching-follow-up').value = '';
+                document.getElementById('coaching-follow-up-date').value = '';
+                document.getElementById('coaching-session-date').valueAsDate = new Date();
+                
+                updateWeekNumber();
+                document.getElementById('quality-score-form').innerHTML = ''; // Clear dynamic form
+                calculateOverallScore(); // Resets score display
+                loadMyCoaching(); // Refresh the history list
+              }
+            })
+            .withFailureHandler(err => {
+              setStatus('coaching-submit-status', 'error', err.message);
+            })
+            .webSubmitCoaching(sessionObject);
+        } catch (err) {
+          setStatus('coaching-submit-status', 'error', err.message);
+        }
+      }
+      
+      
+
+      // --- NEW: Coaching Detail Modal Functions ---
+
+      let currentCoachingDetail = null; // Stores details for export
+
+      function showCoachingDetails(sessionID) {
+        // --- NEW: Debugging ---
+        console.log("Attempting to load details for SessionID:", sessionID);
+        if (!sessionID) {
+          console.error("SessionID is undefined! Aborting.");
+          return;
+        }
+        // --- End Debugging ---
+
+        // 1. Show the modal
+        document.getElementById('coaching-detail-modal-backdrop').style.display = 'block';
+        document.getElementById('coaching-detail-modal').style.display = 'flex';
+        
+        // 2. Reset modal state
+        const modalBody = document.getElementById('coaching-detail-modal-body');
+        modalBody.innerHTML = '<p class="text-color-secondary">Loading details...</p>';
+        document.getElementById('coaching-detail-export-btn').style.display = 'none';
+        currentCoachingDetail = null;
+
+        // 3. Fetch data
+        google.script.run
+          .withSuccessHandler(populateCoachingDetails)
+          .withFailureHandler(err => {
+            // --- NEW: Better Error Logging ---
+            console.error("google.script.run FAILED:", err);
+            modalBody.innerHTML = `<p class="status-message error visible">Error: ${err.message || 'The server call failed. Check the console (F12) for details.'}</p>`;
+            // --- End Better Logging ---
+          })
+          .webGetCoachingSessionDetails(sessionID);
+      }
+
+      function closeCoachingDetails() {
+        document.getElementById('coaching-detail-modal-backdrop').style.display = 'none';
+        document.getElementById('coaching-detail-modal').style.display = 'none';
+        document.getElementById('coaching-detail-modal-body').innerHTML = '';
+        currentCoachingDetail = null;
+      }
+
+      function populateCoachingDetails(details) {
+        // *** Add robust check for null/undefined ***
+        if (!details) {
+          document.getElementById('coaching-detail-modal-body').innerHTML = `<p class="status-message error visible">Error: Received no details from the server. The data might be corrupted or the server function failed silently.</p>`;
+          return;
+        }
+
+        if (details.error) {
+          document.getElementById('coaching-detail-modal-body').innerHTML = `<p class="status-message error visible">Error: ${details.error}</p>`;
+          return;
+        }
+
+        currentCoachingDetail = details; // Save for export
+        const summary = details.summary;
+        const scores = details.scores;
+
+        let scoreDisplay = summary.OverallScore ? `${parseFloat(summary.OverallScore).toFixed(2)}%` : 'N/A';
+        let fuDate = summary.FollowUpDate ? formatDate(summary.FollowUpDate) : 'N/A';
+
+        // *** NEW: Agent Acknowledgement Section ***
+        let agentAckSection = '';
+        if (selfRole === 'agent') {
+          agentAckSection = `<hr class="section-divider"><div class="form-container" style="padding: 0;">`;
+          
+          if (summary.AgentAcknowledgementTimestamp) {
+            // Agent has already acknowledged
+            agentAckSection += `
+              <div class="form-group" style="text-align: center;">
+                <p style="font-size: 1.1rem; margin: 0;"><strong>Session Acknowledged</strong></p>
+                <small class="text-color-secondary">on ${formatDate(summary.AgentAcknowledgementTimestamp)} at ${formatTime(summary.AgentAcknowledgementTimestamp)}</small>
+              </div>
+            `;
+          } else {
+            // Agent needs to acknowledge
+            agentAckSection += `
+              <div id="acknowledgement-status" class="status-message" style="margin-top: 0; margin-bottom: 15px;"></div>
+              <p class="text-color-secondary" style="text-align: center; margin-top: 0;">Please review your coaching details and click below to confirm you have read and understood the session.</p>
+              <button type="button" class="submit-btn-green" style="width: 100%; margin: 0;"
+                      onclick="submitCoachingAcknowledgement('${summary.SessionID}')">Acknowledge Coaching Session</button>
+            `;
+          }
+          agentAckSection += `</div>`;
+        }
+        // *** END NEW SECTION ***
+
+
+        // *** Admin Follow-up Management Section ***
+        let adminSection = '';
+        if (selfRole === 'admin' || selfRole === 'superadmin') {
+          adminSection = `
+            <hr class="section-divider">
+            <h3 style="color: var(--konecta-blue); margin-top: 0;">Manage Follow-up</h3>
+            <div class="form-container" style="padding: 0;">
+              <div id="follow-up-status" class="status-message" style="margin-top: 0; margin-bottom: 15px;"></div>
+              <div id="follow-up-controls" class="form-row" style="align-items: flex-end;">
+                <div class="form-group">
+                  <label for="follow-up-postpone-date">Postpone Date</label>
+                  <input type="date" id="follow-up-postpone-date">
+                </div>
+                <div class="form-group">
+                  <button type="button" class="view-btn" style="background-color: var(--status-pending-text); width: 100%; margin: 0;"
+                          onclick="updateFollowUpStatus('${summary.SessionID}', 'Postponed')">Postpone</button>
+                </div>
+                <div class="form-group">
+                  <button type="button" class="submit-btn-green" style="width: 100%; margin: 0;"
+                          onclick="updateFollowUpStatus('${summary.SessionID}', 'Completed')">Mark Completed</button>
+                </div>
+              </div>
+            </div>
+          `;
+        }
+        // *** END SECTION ***
+
+
+        let html = `
+          <div class="dashboard-detail-item" style="background: var(--page-bg); grid-template-columns: 1fr 2fr; gap: 8px 15px;">
+            <span class="detail-label">Agent:</span>
+            <span class="detail-value" style="text-align: left;">${summary.AgentName}</span>
+            
+            <span class="detail-label">Coach:</span>
+            <span class="detail-value" style="text-align: left;">${summary.CoachName}</span>
+            
+            <span class="detail-label">Session Date:</span>
+            <span class="detail-value" style="text-align: left;">${formatDate(summary.SessionDate)} (${summary.WeekNumber})</span>
+            
+            <span class="detail-label">Overall Score:</span>
+            <span class="detail-value" style="text-align: left; font-size: 1.1rem; color: var(--konecta-dark);">${scoreDisplay}</span>
+            
+            <span class="detail-label">Follow-up Date:</span>
+            <span class="detail-value" style="text-align: left;">${fuDate}</span>
+            
+            <span class="detail-label">Follow-up Status:</span>
+            <span class="detail-value" style="text-align: left;">${summary.FollowUpStatus || 'N/A'}</span>
+            
+            <span class="detail-label" style="grid-column: 1 / -1; margin-top: 10px;"><strong>Coach Comments:</strong></span>
+            <p style="grid-column: 1 / -1; margin: 0; white-space: pre-wrap;">${summary.FollowUpComment || 'No comments provided.'}</p>
+          </div>
+          
+          ${agentAckSection}
+
+          ${adminSection}
+          
+          <hr class="section-divider">
+          
+          <h3 style="color: var(--konecta-blue); margin-top: 0;">Detailed Scores</h3>
+        `;
+
+        // Group scores by category
+        const categories = {};
+        scores.forEach(score => {
+          if (!categories[score.Category]) {
+            categories[score.Category] = [];
+          }
+          categories[score.Category].push(score);
+        });
+
+        // Build HTML for each category
+        for (const categoryName in categories) {
+          html += `
+            <div class="qa-category" style="margin-top: 15px;">
+              <h4>${categoryName}</h4>
+              ${categories[categoryName].map(item => `
+                <div class="qa-criterion">
+                  <p style="margin: 0 0 10px 0;">${item.Criteria}</p>
+                  <div style="display: flex; gap: 15px; align-items: flex-start;">
+                    <span class="status-badge status-approved" style="background-color: var(--konecta-dark); color: white; padding: 8px 15px; min-width: 80px; text-align: center;">Score: ${item.Score}</span>
+                    <textarea readonly style="flex: 1; height: 60px; min-height: 40px; background: var(--card-bg);">${item.Comment || 'N/A'}</textarea>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `;
+        }
+
+        document.getElementById('coaching-detail-modal-body').innerHTML = html;
+        document.getElementById('coaching-detail-export-btn').style.display = 'inline-block';
+        
+        // Set postpone date input to today
+        if (selfRole === 'admin' || selfRole === 'superadmin') {
+          const postponeDateEl = document.getElementById('follow-up-postpone-date');
+          if (postponeDateEl) {
+            postponeDateEl.valueAsDate = new Date();
+          }
+        }
+      }
+      
+      /**
+       * NEW: Export Individual Coaching Session Details
+       */
+      function exportSessionDetails() {
+        if (!currentCoachingDetail) {
+          alert("No coaching details are loaded to export.");
+          return;
+        }
+
+        const summary = currentCoachingDetail.summary;
+        const scores = currentCoachingDetail.scores;
+
+        let csvContent = "data:text/csv;charset=utf-8,";
+        
+        // Add Summary
+        csvContent += "Session Summary\r\n";
+        csvContent += `SessionID,"${summary.SessionID}"\r\n`;
+        csvContent += `Agent,"${summary.AgentName}"\r\n`;
+        csvContent += `Coach,"${summary.CoachName}"\r\n`;
+        csvContent += `Date,"${formatDate(summary.SessionDate)}"\r\n`;
+        csvContent += `Week,"${summary.WeekNumber}"\r\n`;
+        csvContent += `Overall Score,"${summary.OverallScore || 'N/A'}"\r\n`;
+        csvContent += `Follow-up Date,"${summary.FollowUpDate ? formatDate(summary.FollowUpDate) : 'N/A'}"\r\n`;
+        csvContent += `Follow-up Status,"${summary.FollowUpStatus || 'N/A'}"\r\n`;
+        csvContent += `Comments,"${(summary.FollowUpComment || '').replace(/"/g, '""')}"\r\n`;
+        
+        // Add Spacer
+        csvContent += "\r\nDetailed Scores\r\n";
+        
+        // Add Detail Headers
+        csvContent += "Category,Criteria,Score,Comment\r\n";
+
+        // Add Detail Rows
+        scores.forEach(item => {
+          const category = `"${item.Category.replace(/"/g, '""')}"`;
+          const criteria = `"${item.Criteria.replace(/"/g, '""')}"`;
+          const score = item.Score;
+          const comment = `"${(item.Comment || '').replace(/"/g, '""')}"`;
+          csvContent += [category, criteria, score, comment].join(",") + "\r\n";
+        });
+
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `Coaching_Detail_${summary.AgentName}_${formatDate(summary.SessionDate)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      function updateFollowUpStatus(sessionID, newStatus) {
+        let newDate = null;
+        
+        if (newStatus === 'Postponed') {
+          newDate = document.getElementById('follow-up-postpone-date').value;
+          if (!newDate) {
+            setStatus('follow-up-status', 'error', 'Please select a date to postpone to.');
+            return;
+          }
+        }
+        
+        // Show processing status inside the modal
+        setStatus('follow-up-status', 'processing', 'Updating status...');
+
+        google.script.run
+          .withSuccessHandler(result => {
+            if (result.error) {
+              setStatus('follow-up-status', 'error', result.error);
+            } else {
+              setStatus('follow-up-status', 'success', result.message);
+              // Refresh the main list
+              loadMyCoaching();
+              // Re-fetch details for the modal to show updated info
+              showCoachingDetails(sessionID);
+            }
+          })
+          .withFailureHandler(err => {
+            setStatus('follow-up-status', 'error', err.message);
+          })
+          .webUpdateFollowUpStatus(sessionID, newStatus, newDate);
+      }
+
+      function submitCoachingAcknowledgement(sessionID) {
+        // Show processing status inside the modal
+        setStatus('acknowledgement-status', 'processing', 'Submitting acknowledgement...');
+
+        google.script.run
+          .withSuccessHandler(result => {
+            if (result.error) {
+              setStatus('acknowledgement-status', 'error', result.error);
+            } else if (result.success === false) {
+              setStatus('acknowledgement-status', 'error', result.message);
+            } else {
+              setStatus('acknowledgement-status', 'success', result.message);
+              // Refresh the main list
+              loadMyCoaching();
+              // Re-fetch details for the modal to show the updated status
+              showCoachingDetails(sessionID);
+            }
+          })
+          .withFailureHandler(err => {
+            setStatus('acknowledgement-status', 'error', err.message);
+          })
+          .webSubmitCoachingAcknowledgement(sessionID);
+      }
+
+
+      // --- END Coaching Functions ---
+
+      // [START] MODIFICATION 6: Add JS for Coaching Admin Tab
+
+      let categoryCounter = 0;
+
+      function addTemplateCategory() {
+        categoryCounter++;
+        const container = document.getElementById('template-categories-container');
+        const newCategory = document.createElement('div');
+        newCategory.className = 'template-category-block';
+        newCategory.id = 'category-' + categoryCounter;
+        newCategory.innerHTML = `
+          <button type.="button" class="remove-category-btn" onclick="removeTemplateItem('category-${categoryCounter}')" title="Remove Category">&times;</button>
+          <div class="form-group">
+            <label for="category-name-${categoryCounter}">Category Name</label>
+            <input type="text" id="category-name-${categoryCounter}" class="category-name-input" placeholder="e.g., 'Opening'">
+          </div>
+          <div class="template-criteria-container" id="criteria-container-${categoryCounter}">
+            </div>
+          <button type="button" class="view-btn" onclick="addTemplateCriteria(${categoryCounter})" style="background-color: var(--text-color-secondary); margin-top: 15px; padding: 8px 15px; font-size: 0.9rem;">+ Add Criteria</button>
+        `;
+        container.appendChild(newCategory);
+      }
+
+      function addTemplateCriteria(categoryIndex) {
+        const container = document.getElementById('criteria-container-' + categoryIndex);
+        const criteriaItem = document.createElement('div');
+        criteriaItem.className = 'template-criteria-item';
+        criteriaItem.innerHTML = `
+          <input type="text" class="criteria-name-input" placeholder="e.g., 'Agent greeted customer'">
+          <button type="button" class="remove-btn" onclick="removeTemplateItem(this.parentElement)">-</button>
+        `;
+        container.appendChild(criteriaItem);
+      }
+
+      function removeTemplateItem(elementOrId) {
+        let elementToRemove;
+        if (typeof elementOrId === 'string') {
+          elementToRemove = document.getElementById(elementOrId);
+        } else {
+          elementToRemove = elementOrId;
+        }
+        if (elementToRemove) {
+          elementToRemove.remove();
+        }
+      }
+
+      function saveNewTemplate() {
+        try {
+          const templateName = document.getElementById('template-name').value.trim();
+          if (!templateName) {
+            throw new Error("Template Name is required.");
+          }
+          
+          const categories = [];
+          const categoryBlocks = document.querySelectorAll('.template-category-block');
+          
+          if (categoryBlocks.length === 0) {
+            throw new Error("You must add at least one category.");
+          }
+
+          categoryBlocks.forEach(block => {
+            const categoryName = block.querySelector('.category-name-input').value.trim();
+            if (!categoryName) {
+              throw new Error("All Category Names are required.");
+            }
+            
+            const criteria = [];
+            const criteriaInputs = block.querySelectorAll('.criteria-name-input');
+            
+            if (criteriaInputs.length === 0) {
+              throw new Error(`Category '${categoryName}' must have at least one criterion.`);
+            }
+            
+            criteriaInputs.forEach(input => {
+              const criteriaName = input.value.trim();
+              if (!criteriaName) {
+                throw new Error("All Criteria fields are required.");
+              }
+              criteria.push(criteriaName);
+            });
+            
+            categories.push({ name: categoryName, criteria: criteria });
+          });
+          
+          setStatus('coaching-admin-status', 'processing', `Saving template '${templateName}'...`);
+          
+          google.script.run
+            .withSuccessHandler(msg => {
+              if (msg.startsWith('Error:')) { 
+                setStatus('coaching-admin-status', 'error', msg.replace('Error: ', ''));
+              } else {
+                setStatus('coaching-admin-status', 'success', msg);
+                // Reset form
+                document.getElementById('template-create-form').reset();
+                document.getElementById('template-categories-container').innerHTML = '';
+                categoryCounter = 0;
+                // Reload the template list in the *other* tab
+                loadTemplateList();
+              }
+            })
+            .withFailureHandler(err => {
+              setStatus('coaching-admin-status', 'error', err.message);
+            })
+            .webSaveNewTemplate(templateName, categories);
+
+        } catch (err) {
+          setStatus('coaching-admin-status', 'error', err.message);
+        }
+      }
+// [END] MODIFICATION 6
+
+
+      // *** NEW REGISTRATION JS ***
+
+      function showSupervisorModal(allAdmins) {
+        const directSelect = document.getElementById('reg-direct-manager');
+        const funcSelect = document.getElementById('reg-functional-manager');
+        
+        let options = '<option value="">-- Select Manager --</option>';
+        allAdmins.forEach(admin => {
+          options += `<option value="${admin.email}">${admin.name} (${admin.role})</option>`;
+        });
+
+        directSelect.innerHTML = options;
+        funcSelect.innerHTML = options;
+        
+        document.getElementById('supervisor-modal-backdrop').style.display = 'block';
+        document.getElementById('supervisor-modal').style.display = 'flex';
+      }
+
+      function saveMyRegistration() {
+        try {
+          const formData = {
+             phone: document.getElementById('reg-phone').value,
+             address: document.getElementById('reg-address').value,
+             directManager: document.getElementById('reg-direct-manager').value,
+             functionalManager: document.getElementById('reg-functional-manager').value
+          };
+
+          if (!formData.phone || !formData.address) throw new Error("Address and Phone are required.");
+          if (!formData.directManager || !formData.functionalManager) throw new Error("Both managers are required.");
+
+          setStatus('supervisor-save-status', 'processing', 'Saving submission...');
+
+          google.script.run
+            .withSuccessHandler(msg => {
+              if (msg.startsWith('Error:')) {
+                setStatus('supervisor-save-status', 'error', msg.replace('Error: ', ''));
+              } else {
+                document.getElementById('supervisor-modal-backdrop').style.display = 'none';
+                document.getElementById('supervisor-modal').style.display = 'none';
+                
+                // Show the "pending" message on the main panel
+                document.getElementById('punch-panel').innerHTML = `
+                  <h2 style="color: var(--konecta-blue);">Registration Pending</h2>
+                  <p class="text-color-secondary">${msg}</p>
+                  <p class="text-color-secondary">Both of your selected managers must approve your request.</p>
+                `;
+              }
+            })
+            .withFailureHandler(err => {
+              setStatus('supervisor-save-status', 'error', err.message);
+            })
+            .webSubmitFullRegistration(formData); // Call new function
+
+        } catch (err) {
+          setStatus('supervisor-save-status', 'error', err.message);
+        }
+      }
+      // *** END: NEW SUPERVISOR MODAL FUNCTIONS ***
+
+      // *** START: REGISTRATION WORKFLOW FUNCTIONS ***
+
+      /**
+       * Called for pending users to see if they need to be prompted
+       */
+      function loadMyRegistrationStatus() {
+        google.script.run
+          .withSuccessHandler(result => {
+            if (result.error) {
+              console.error(result.error);
+              return;
+            }
+            if (result.status === 'New' || result.status === 'Denied') {
+              // User is pending but has no submission, or was denied.
+              // Show the modal to (re-)submit.
+              if(result.status === 'Denied') {
+                 // Update modal text to show it was denied
+                 document.getElementById('supervisor-modal').querySelector('p').innerText = 'Your previous supervisor selection was denied. Please select the correct supervisor from the list.';
+              }
+              showSupervisorModal(allAdminsList);
+            }
+            // If status is 'Pending', we do nothing. The main page message is already showing.
+          })
+          .webGetMyRegistrationStatus();
+      }
+
+      /**
+       * Called by superadmin clicking the "Registration Admin" tab.
+       */
+      function loadRegistrationAdmin() {
+  setStatus('registration-admin-status', 'processing', 'Loading pending registrations...');
+  const listDiv = document.getElementById('registration-admin-list');
+  listDiv.innerHTML = '';
+
+  google.script.run
+    .withSuccessHandler(requests => {
+      if (requests.error) {
+        setStatus('registration-admin-status', 'error', requests.error);
+        return;
+      }
+      if (requests.length === 0) {
+        setStatus('registration-admin-status', 'success', 'No pending registrations requiring your action.');
+        return;
+      }
+      
+      setStatus('registration-admin-status', 'success', `Loaded ${requests.length} pending requests.`);
+      
+      let html = '';
+      requests.forEach(req => {
+        // Logic to show Date Input (Step 1) OR Read-only Date (Step 2)
+        let dateInputHtml = '';
+        const isStep1 = req.approverRole === 'Direct';
+        const isStep2 = req.approverRole === 'Functional';
+        const inputId = `hiring-date-${req.requestID}`;
+        const defaultDate = req.hiringDate || new Date().toISOString().split('T')[0];
+
+        if (isStep1) {
+           // Direct Manager: Must Input Date
+           dateInputHtml = `
+             <div class="form-group" style="margin: 15px 0 0 0; background: #fff; padding: 10px; border: 1px solid var(--konecta-blue); border-radius: 4px;">
+               <label for="${inputId}" style="font-weight: 600; color: var(--konecta-blue);">Step 1: Set Hiring Date (Required)</label>
+               <input type="date" id="${inputId}" value="${defaultDate}" style="width: 100%;">
+             </div>`;
+        } else if (isStep2) {
+           // Project Manager: Review Date
+           dateInputHtml = `
+             <div class="form-group" style="margin: 15px 0 0 0; background: #f0fdf4; padding: 10px; border: 1px solid var(--status-success-text); border-radius: 4px;">
+               <label style="font-weight: 600; color: var(--status-success-text);">Step 2: Review Hiring Date</label>
+               <input type="date" id="${inputId}" value="${defaultDate}" readonly style="width: 100%; background: #e6fffa; cursor: not-allowed;">
+               <small>Set by Direct Manager. Approve to finalize account.</small>
+             </div>`;
+        }
+
+        html += `
+          <div class="request-list-item">
+            <div class="item-details">
+              <h4>${req.userName}</h4>
+              <p><strong>Email:</strong> ${req.userEmail}</p>
+              <p><strong>Action Required:</strong> <span style="color:var(--konecta-blue); font-weight:bold;">${req.otherStatus}</span></p>
+              <p class="text-color-secondary">Submitted: ${req.timestamp}</p>
+              ${dateInputHtml}
+            </div>
+            <div class="item-actions">
+              <button class="approve-btn" onclick="approveDenyRegistration('${req.requestID}', '${req.userEmail}', '', 'Approved', '${inputId}')">Approve</button>
+              <button class="deny-btn" onclick="approveDenyRegistration('${req.requestID}', '${req.userEmail}', '', 'Denied', null)">Deny</button>
+            </div>
+          </div>
+        `;
+      });
+      listDiv.innerHTML = html;
+    })
+    .withFailureHandler(err => {
+      setStatus('registration-admin-status', 'error', err.message);
+    })
+    .webGetPendingRegistrations();
+}
+
+      // REPLACE this function in your <script> tag
+function approveDenyRegistration(requestID, userEmail, supervisorEmail, newStatus, dateInputId) {
+  const runAction = (hiringDateStr) => {
+    setStatus('registration-admin-status', 'processing', `Processing ${newStatus}...`);
+
+    google.script.run
+      .withSuccessHandler(result => {
+        if (result.error) {
+          setStatus('registration-admin-status', 'error', result.error);
+        } else {
+          setStatus('registration-admin-status', 'success', result.message);
+          loadRegistrationAdmin(); // Refresh list
+        }
+      })
+      .withFailureHandler(err => {
+        setStatus('registration-admin-status', 'error', err.message);
+      })
+      .webApproveDenyRegistration(requestID, userEmail, supervisorEmail, newStatus, hiringDateStr);
+  };
+
+  if (newStatus === 'Approved') {
+    // Logic: Read date if the input exists
+    let hiringDateStr = null;
+    if (dateInputId) {
+       hiringDateStr = document.getElementById(dateInputId).value;
+       if (!hiringDateStr) {
+         setStatus('registration-admin-status', 'error', 'Hiring Date is missing.');
+         return;
+       }
     }
+    
+    showCustomConfirm(
+      `Are you sure you want to APPROVE ${userEmail}?`,
+      'Approve',
+      'approve-btn',
+      () => runAction(hiringDateStr)
+    );
+    
+  } else {
+    showCustomConfirm(
+      `Are you sure you want to DENY ${userEmail}?`,
+      'Deny',
+      'deny-btn',
+      () => runAction(null)
+    );
+  }
+}
+      
+      // *** END: REGISTRATION WORKFLOW FUNCTIONS ***
+      // *** START: CUSTOM CONFIRM MODAL FUNCTIONS ***
+      
+      // A variable to hold the callback function
+      let _onConfirmCallback = null;
 
-    const formatTime = (val) => {
-        if (!val) return "";
-        if (val instanceof Date) return Utilities.formatDate(val, Session.getScriptTimeZone(), "HH:mm:ss");
-        if (typeof val === 'string' && val.includes('T')) return val.split('T')[1].substring(0,8);
-        return val.toString().substring(0,8);
+      function showCustomConfirm(message, confirmText = 'Confirm', confirmClass = 'submit-btn-green', onConfirm = null) {
+        // Set modal content
+        document.getElementById('confirm-modal-message').innerText = message;
+        
+        const confirmBtn = document.getElementById('confirm-modal-confirm-btn');
+        confirmBtn.innerText = confirmText;
+        
+        // Set button style (e.g., 'deny-btn' for red, 'submit-btn-green' for green)
+        confirmBtn.className = ''; // Reset classes
+        confirmBtn.classList.add(confirmClass); // Add the specific class
+        
+        // Store the callback
+        _onConfirmCallback = onConfirm;
+
+        // Set the click handler for the confirm button
+        confirmBtn.onclick = () => {
+          if (typeof _onConfirmCallback === 'function') {
+            _onConfirmCallback();
+          }
+          hideCustomConfirm();
+        };
+
+        // Show the modal
+        document.getElementById('confirm-modal-backdrop').style.display = 'block';
+        document.getElementById('confirm-modal').style.display = 'flex';
+      }
+
+      function hideCustomConfirm() {
+        document.getElementById('confirm-modal-backdrop').style.display = 'none';
+        document.getElementById('confirm-modal').style.display = 'none';
+        _onConfirmCallback = null; // Clear the callback
+      }
+      // *** END: CUSTOM CONFIRM MODAL FUNCTIONS ***
+
+      // *** ADD THESE FUNCTIONS ***
+      function showRoleRequestModal() {
+        // Reset form status
+        setStatus('admin-request-status', '', '');
+        document.getElementById('admin-request-form').reset();
+        document.getElementById('role-request-modal-backdrop').style.display = 'block';
+        document.getElementById('role-request-modal').style.display = 'flex';
+      }
+
+      function hideRoleRequestModal() {
+        document.getElementById('role-request-modal-backdrop').style.display = 'none';
+        document.getElementById('role-request-modal').style.display = 'none';
+      }
+
+      function showRoleApprovalModal() {
+  // This is the Superadmin modal
+  document.getElementById('role-approval-modal-backdrop').style.display = 'block';
+  document.getElementById('role-approval-modal').style.display = 'flex';
+  loadRoleRequests(); // Load the list of requests
+}
+
+function hideRoleApprovalModal() {
+  document.getElementById('role-approval-modal-backdrop').style.display = 'none';
+  document.getElementById('role-approval-modal').style.display = 'none';
+}
+
+function loadRoleRequests() {
+  setStatus('role-approval-status', 'processing', 'Loading pending requests...');
+  const listDiv = document.getElementById('role-request-list');
+  listDiv.innerHTML = '';
+
+  google.script.run
+    .withSuccessHandler(requests => {
+      if (requests.error) {
+        setStatus('role-approval-status', 'error', requests.error);
+        return;
+      }
+      if (requests.length === 0) {
+        listDiv.innerHTML = '<p class="text-color-secondary">No pending role requests.</p>';
+        setStatus('role-approval-status', '', ''); // Clear loading
+        // Remove notification badge
+        document.getElementById('header-role-request-button').classList.remove('has-notification');
+        return;
+      }
+
+      let html = '';
+      requests.forEach(req => {
+        html += `
+          <div class="request-list-item">
+            <div class="item-details">
+              <h4>${req.userName}</h4>
+              <p><strong>Email:</strong> ${req.userEmail}</p>
+              <p><strong>Request:</strong> ${req.currentRole} ➔ <strong>${req.requestedRole}</strong></p>
+              <p><strong>Justification:</strong> ${req.justification}</p>
+              <p class="text-color-secondary"><strong>Submitted:</strong> ${formatDate(req.timestamp)}</p>
+            </div>
+            <div class="item-actions">
+              <button class="approve-btn" onclick="approveDenyRoleRequest('${req.requestID}', 'Approved')">Approve</button>
+              <button class="deny-btn" onclick="approveDenyRoleRequest('${req.requestID}', 'Denied')">Deny</button>
+            </div>
+          </div>
+        `;
+      });
+      listDiv.innerHTML = html;
+      setStatus('role-approval-status', 'success', `Loaded ${requests.length} requests.`);
+    })
+    .withFailureHandler(err => {
+      setStatus('role-approval-status', 'error', err.message);
+    })
+    .webGetRoleRequests();
+}
+
+function approveDenyRoleRequest(requestID, newStatus) {
+  const runAction = () => {
+    setStatus('role-approval-status', 'processing', `Processing ${newStatus}...`);
+
+    google.script.run
+      .withSuccessHandler(result => {
+        if (result.error) {
+          setStatus('role-approval-status', 'error', result.error);
+        } else {
+          setStatus('role-approval-status', 'success', result.message);
+          loadRoleRequests(); // Refresh the list
+        }
+      })
+      .withFailureHandler(err => {
+        setStatus('role-approval-status', 'error', err.message);
+      })
+      .webApproveDenyRoleRequest(requestID, newStatus);
+  };
+
+  // Show a confirmation before doing anything
+  const message = newStatus === 'Approved' ? 'Are you sure you want to approve this role upgrade?' : 'Are you sure you want to deny this request?';
+  const buttonClass = newStatus === 'Approved' ? 'submit-btn-green' : 'deny-btn';
+
+  showCustomConfirm(message, newStatus, buttonClass, runAction);
+}
+// *** END OF NEW FUNCTIONS ***
+
+
+
+      // ===================================
+      // === ANNOUNCEMENTS MODULE (JS) ===
+      // ===================================
+
+// For users to see the banner
+function loadAnnouncements() {
+  google.script.run
+    .withSuccessHandler(renderAnnouncementsBanner)
+    .withFailureHandler(err => console.error("Failed to load announcements:", err))
+    .webGetAnnouncements();
+}
+
+function renderAnnouncementsBanner(announcements) {
+  const container = document.getElementById('announcement-banner-container');
+  const contentArea = document.getElementById('announcement-content-area');
+  
+  if (announcements && announcements.length > 0) {
+    // We removed the sessionStorage check here.
+    
+    // Using <pre> preserves line breaks from the textarea
+    let html = announcements.map(a => 
+      `<pre style="font-family: 'Inter', Arial, sans-serif; margin: 0 0 10px 0; white-space: pre-wrap;">- ${a.content}</pre>`
+    ).join('');
+    
+    contentArea.innerHTML = html;
+    container.style.display = 'block'; // Always show it if announcements exist
+  } else {
+    container.style.display = 'none';
+  }
+}
+
+function dismissAnnouncements() {
+  document.getElementById('announcement-banner-container').style.display = 'none';
+  // We no longer set sessionStorage, so it will reappear on refresh
+}
+
+// For superadmins to manage them
+function loadAnnouncements_Admin() {
+  setStatus('announcement-admin-status', 'processing', 'Loading announcements...');
+  google.script.run
+    .withSuccessHandler(renderAnnouncementsAdmin)
+    .withFailureHandler(err => setStatus('announcement-admin-status', 'error', err.message))
+    .webGetAnnouncements_Admin();
+}
+
+function renderAnnouncementsAdmin(announcements) {
+  const listDiv = document.getElementById('announcement-admin-list');
+  if (announcements.error) {
+    setStatus('announcement-admin-status', 'error', announcements.error);
+    listDiv.innerHTML = '';
+    return;
+  }
+
+  if (!announcements || announcements.length === 0) {
+    listDiv.innerHTML = '<p class="text-color-secondary">No announcements found.</p>';
+    setStatus('announcement-admin-status', '', '');
+    return;
+  }
+
+  let html = '';
+  // Sort by timestamp, newest first
+  announcements.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+  announcements.forEach(a => {
+    const statusClass = a.status === 'Active' ? 'status-approved' : 'status-pending';
+    // Escape content for safe insertion into an HTML onclick attribute
+    const escapedContent = a.content.replace(/'/g, "\\'").replace(/"/g, "&quot;").replace(/\r\n|\r|\n/g, '\\n');
+
+    html += `
+      <div class="request-list-item">
+        <div class="item-details">
+          <pre style="font-family: 'Inter', Arial, sans-serif; margin: 0; white-space: pre-wrap;">${a.content}</pre>
+          <small class="text-color-secondary">By: ${a.createdBy} on ${formatDate(a.timestamp)}</small>
+        </div>
+        <div class="item-actions" style="display: flex; flex-direction: column; gap: 5px; align-items: flex-end; min-width: 120px;">
+          <span class="status-badge ${statusClass}">${a.status}</span>
+          <div style="margin-top: 5px;">
+            <button class="view-btn" style="background-color: var(--konecta-blue); padding: 5px 10px; font-size: 0.9rem; margin: 0 5px;" onclick="editAnnouncement('${a.id}', '${escapedContent}', '${a.status}')">Edit</button>
+            <button class="deny-btn" style="padding: 5px 10px; font-size: 0.9rem; margin: 0;" onclick="deleteAnnouncement('${a.id}')">Delete</button>
+          </div>
+        </div>
+      </div>
+    `;
+  });
+  listDiv.innerHTML = html;
+  setStatus('announcement-admin-status', '', '');
+}
+
+function clearAnnouncementForm() {
+  document.getElementById('announcement-id').value = '';
+  document.getElementById('announcement-content').value = '';
+  document.getElementById('announcement-status').value = 'Active';
+  setStatus('announcement-admin-status', '', '');
+}
+
+function editAnnouncement(id, content, status) {
+  document.getElementById('announcement-id').value = id;
+  // Handle escaped quotes and newlines from the onclick string
+  const unescapedContent = content.replace(/&quot;/g, '"').replace(/\\n/g, '\n');
+  document.getElementById('announcement-content').value = unescapedContent;
+  document.getElementById('announcement-status').value = status;
+
+  // Scroll to the top of the main container to show the form
+  document.querySelector('main').scrollTo(0, 0); 
+}
+
+function saveAnnouncement() {
+  const announcement = {
+    id: document.getElementById('announcement-id').value || null,
+    content: document.getElementById('announcement-content').value,
+    status: document.getElementById('announcement-status').value
+  };
+
+  if (!announcement.content || announcement.content.trim() === "") {
+    setStatus('announcement-admin-status', 'error', 'Content cannot be empty.');
+    return;
+  }
+
+  setStatus('announcement-admin-status', 'processing', 'Saving...');
+
+  google.script.run
+    .withSuccessHandler(result => {
+      if (result.error) {
+        setStatus('announcement-admin-status', 'error', result.error);
+      } else {
+        setStatus('announcement-admin-status', 'success', 'Announcement saved!');
+        clearAnnouncementForm();
+        loadAnnouncements_Admin(); // Refresh admin list
+        loadAnnouncements(); // Refresh user banner
+      }
+    })
+    .withFailureHandler(err => setStatus('announcement-admin-status', 'error', err.message))
+    .webSaveAnnouncement(announcement);
+}
+
+function deleteAnnouncement(id) {
+  // Use the existing custom confirm modal
+  showCustomConfirm(
+    'Are you sure you want to permanently delete this announcement?',
+    'Delete',
+    'deny-btn',
+    () => { // This is the onConfirm callback
+      setStatus('announcement-admin-status', 'processing', 'Deleting...');
+      google.script.run
+        .withSuccessHandler(result => {
+          if (result.error) {
+            setStatus('announcement-admin-status', 'error', result.error);
+          } else {
+            setStatus('announcement-admin-status', 'success', 'Announcement deleted.');
+            loadAnnouncements_Admin(); // Refresh admin list
+            loadAnnouncements(); // Refresh user banner
+          }
+        })
+        .withFailureHandler(err => setStatus('announcement-admin-status', 'error', err.message))
+        .webDeleteAnnouncement(id);
+    }
+  );
+}
+
+// --- Profile Functions ---
+
+// [index.html] REPLACE loadMyProfile, saveProfile, and ADD switchProfileSubTab
+
+function switchProfileSubTab(tabName) {
+  // Hide all views
+  document.querySelectorAll('.profile-subview').forEach(el => el.style.display = 'none');
+  // Remove active class from buttons
+  document.querySelectorAll('#profile-panel .btn-secondary').forEach(btn => btn.classList.remove('active'));
+  
+  // Show selected
+  document.getElementById('prof-view-' + tabName).style.display = 'block';
+  document.getElementById('btn-prof-' + tabName).classList.add('active');
+
+  if (tabName === 'docs') loadMyDocuments();
+}
+
+function loadMyProfile() {
+  setStatus('profile-status', 'processing', 'Loading profile data...');
+  
+  google.script.run
+    .withSuccessHandler(data => {
+      setStatus('profile-status', '', ''); 
+      const c = data.core;
+      const p = data.pii;
+
+      // --- General Tab ---
+      document.getElementById('prof-name').value = c.name;
+      document.getElementById('prof-id').value = c.empID || 'N/A';
+      document.getElementById('prof-email').value = c.email;
+      document.getElementById('prof-personal-email').value = p.personalEmail || '';
+      document.getElementById('prof-phone').value = p.phone || '';
+      document.getElementById('prof-address').value = p.address || '';
+      document.getElementById('prof-emergency').value = p.emergencyContact || '';
+      document.getElementById('prof-relation').value = p.emergencyRelation || '';
+
+      // --- Contract Tab ---
+      // Note: You might need to ensure 'role', 'supervisor', etc are passed correctly in data.core
+      // Since we didn't strictly map "Contract Type" in the return object yet, 
+      // you might see empty fields here unless we update webGetMyProfile to return raw row data.
+      // For now, let's map what we definitely have.
+      
+      document.getElementById('prof-direct-mgr').value = c.supervisor || '';
+      document.getElementById('prof-proj-mgr').value = c.projectManager || '';
+      document.getElementById('prof-hiring').value = p.hiringDate || '';
+      
+      // Confidential: Salary (Hide if empty or restricted)
+      if (p.salary) {
+         document.getElementById('prof-salary').value = p.salary;
+      } else {
+         document.getElementById('prof-salary').value = "Confidential";
+      }
+      document.getElementById('prof-iban').value = p.iban || '';
+
+      // --- Personal Tab ---
+      document.getElementById('prof-nat-id').value = p.nationalId || '';
+      document.getElementById('prof-social').value = p.socialInsurance || '';
+      document.getElementById('prof-dob').value = p.birthDate || '';
+      document.getElementById('prof-age').value = p.age || '';
+      document.getElementById('prof-marital').value = p.maritalStatus || '';
+      document.getElementById('prof-dependents').value = p.dependents || '';
+
+    })
+    .withFailureHandler(err => {
+      setStatus('profile-status', 'error', err.message);
+    })
+    .webGetMyProfile();
+}
+
+function saveProfile() {
+  const sensitiveFields = ['iban', 'nationalId']; // Add fields that require approval
+  
+  // 1. Handle Standard Updates (Phone, Address, etc. - if you allow direct update)
+  // For Phase 2 compliance, let's say ALL changes might need approval, 
+  // or at least IBAN. Let's assume Address/Phone are still direct for now 
+  // but IBAN triggers the new flow.
+  
+  const iban = document.getElementById('prof-iban').value;
+  const originalIban = document.getElementById('prof-iban').getAttribute('data-original'); // You need to store original on load
+
+  if (iban && iban !== originalIban) {
+     if(confirm("Changing IBAN requires HR approval. Submit request?")) {
+        google.script.run
+          .withSuccessHandler(alert)
+          .webSubmitDataChangeRequest('IBAN', iban, "User Request via Profile");
+     }
+  }
+  
+  
+  
+  const formData = {
+    phone: document.getElementById('prof-phone').value,
+    address: document.getElementById('prof-address').value,
+    personalEmail: document.getElementById('prof-personal-email').value,
+    emergencyContact: document.getElementById('prof-emergency').value,
+    emergencyRelation: document.getElementById('prof-relation').value,
+    iban: document.getElementById('prof-iban').value
+  };
+
+  setStatus('profile-status', 'processing', 'Saving changes...');
+  
+  google.script.run
+    .withSuccessHandler(msg => {
+      setStatus('profile-status', 'success', msg);
+    })
+    .withFailureHandler(err => {
+      setStatus('profile-status', 'error', err.message);
+    })
+    .webUpdateProfile(formData);
+}
+
+function switchProfileView(viewName) {
+  // Hide all
+  document.getElementById('profile-view-details').style.display = 'none';
+  document.getElementById('profile-view-documents').style.display = 'none';
+  document.getElementById('profile-view-warnings').style.display = 'none';
+
+  // Show selected
+  document.getElementById('profile-view-' + viewName).style.display = 'block';
+
+  // Load data if needed
+  if (viewName === 'documents') loadMyDocuments();
+  if (viewName === 'warnings') loadMyWarnings();
+}
+
+function loadMyDocuments() {
+  const container = document.getElementById('doc-list-container');
+  container.innerHTML = '<p class="text-color-secondary">Scanning Drive folders...</p>';
+  
+  google.script.run
+    .withSuccessHandler(files => {
+      if (files.length === 0) {
+        container.innerHTML = '<p class="text-color-secondary">No documents found in your employee folder.</p>';
+        return;
+      }
+      let html = '';
+      files.forEach(f => {
+        let icon = '📄';
+        if (f.type.includes('Payslip')) icon = '💰';
+        if (f.type.includes('Onboarding')) icon = '🤝';
+        
+        html += `
+          <div class="request-list-item">
+            <div class="item-details">
+              <h4>${icon} ${f.name}</h4>
+              <p class="text-color-secondary">Folder: ${f.type} | Date: ${formatDate(f.date)}</p>
+            </div>
+            <div class="item-actions">
+              <a href="${f.url}" target="_blank" class="view-btn" style="text-decoration:none; padding: 6px 12px; display:inline-block;">Open</a>
+            </div>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
+    })
+    .withFailureHandler(err => container.innerHTML = `<p class="status-message error visible">${err.message}</p>`)
+    .webGetMyDocuments();
+}
+
+function loadMyWarnings() {
+  const container = document.getElementById('warning-list-container');
+  container.innerHTML = '<p class="text-color-secondary">Checking records...</p>';
+
+  google.script.run
+    .withSuccessHandler(warnings => {
+      if (warnings.length === 0) {
+        container.innerHTML = '<p class="status-message success visible" style="background-color:var(--status-success-bg); color:var(--status-success-text);">No active warnings. Keep up the good work!</p>';
+        return;
+      }
+      let html = '';
+      warnings.forEach(w => {
+        html += `
+          <div class="request-list-item" style="border-left: 4px solid var(--status-error-text);">
+            <div class="item-details">
+              <h4 style="color: var(--status-error-text);">${w.type} (${w.level})</h4>
+              <p><strong>Date:</strong> ${w.date}</p>
+              <p>${w.description}</p>
+            </div>
+            <div class="item-actions">
+              <span class="status-badge status-denied">${w.status}</span>
+            </div>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
+    })
+    .withFailureHandler(err => container.innerHTML = `<p class="status-message error visible">${err.message}</p>`)
+    .webGetMyWarnings();
+}
+
+
+// --- PHASE 3 JS FUNCTIONS ---
+
+function loadProjectsDropdown() {
+  // 1. Punch Clock Project Select
+  const selectPunch = document.getElementById('current-project-select');
+  // 2. Project Admin Dashboard Select
+  const selectAdmin = document.getElementById('project-admin-select');
+  
+  google.script.run
+    .withSuccessHandler(projects => {
+      const buildOptions = (sel) => {
+          if (!sel) return;
+          sel.innerHTML = '<option value="">-- Select Project --</option>';
+          if (projects.length === 0) {
+             const opt = document.createElement('option');
+             opt.text = "(No projects available)";
+             opt.disabled = true;
+             sel.appendChild(opt);
+          } else {
+             projects.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.text = p.name;
+                sel.appendChild(opt);
+             });
+          }
+      };
+
+      buildOptions(selectPunch);
+      buildOptions(selectAdmin);
+    })
+    .withFailureHandler(err => {
+      console.error("Project Load Error:", err);
+    })
+    .webGetProjects();
+}
+
+function saveProject() {
+  const data = {
+    name: document.getElementById('proj-name').value,
+    manager: document.getElementById('proj-manager').value
+  };
+  setStatus('project-status', 'processing', 'Saving...');
+  google.script.run
+    .withSuccessHandler(msg => {
+      setStatus('project-status', 'success', msg);
+      document.getElementById('project-form').reset();
+      loadProjectsDropdown(); // Refresh dropdown
+    })
+    .withFailureHandler(err => setStatus('project-status', 'error', err.message))
+    .webSaveProject(data);
+}
+
+
+
+// ==========================================
+      // === PHASE 4: RECRUITMENT JS FUNCTIONS ===
+      // ==========================================
+
+      function loadCandidates() {
+        const list = document.getElementById('candidate-list');
+        list.innerHTML = '<p class="text-color-secondary">Loading...</p>';
+        
+        google.script.run
+          .withSuccessHandler(candidates => {
+            if (candidates.length === 0) {
+              list.innerHTML = '<p class="text-color-secondary">No candidates found.</p>';
+              return;
+            }
+            let html = '';
+            candidates.forEach(c => {
+              let actionButtons = '';
+              if (c.status !== 'Hired' && c.status !== 'Rejected') {
+                actionButtons = `
+                  <button class="view-btn" style="padding:5px 10px; font-size:0.8rem;" onclick="updateCandidate('${c.id}', 'Active', 'Interview 1')">Interview 1</button>
+                  <button class="submit-btn-green" style="padding:5px 10px; font-size:0.8rem;" onclick="hireCandidate('${c.id}', '${c.name}')">HIRE</button>
+                  <button class="deny-btn" style="padding:5px 10px; font-size:0.8rem;" onclick="updateCandidate('${c.id}', 'Rejected', 'Rejected')">Reject</button>
+                `;
+              } else {
+                actionButtons = `<span class="status-badge ${c.status === 'Hired' ? 'status-approved' : 'status-denied'}">${c.status}</span>`;
+              }
+
+              html += `
+                <div class="request-list-item">
+                  <div class="item-details">
+                    <h4>${c.name} <span class="text-color-secondary" style="font-size:0.9rem; font-weight:400;">(${c.position})</span></h4>
+                    <p><strong>Email:</strong> ${c.email}</p>
+                    <p><strong>CV:</strong> <a href="${c.cv}" target="_blank">View CV</a></p>
+                    <p><strong>Stage:</strong> ${c.stage} | <strong>Applied:</strong> ${formatDate(c.date)}</p>
+                  </div>
+                  <div class="item-actions" style="display:flex; flex-direction:column; gap:5px;">
+                    ${actionButtons}
+                  </div>
+                </div>
+              `;
+            });
+            list.innerHTML = html;
+          })
+          .withFailureHandler(err => setStatus('recruitment-status', 'error', err.message))
+          .webGetCandidates();
+      }
+
+      function updateCandidate(id, status, stage) {
+        setStatus('recruitment-status', 'processing', 'Updating...');
+        google.script.run
+          .withSuccessHandler(() => {
+            setStatus('recruitment-status', 'success', 'Updated successfully.');
+            loadCandidates();
+          })
+          .webUpdateCandidateStatus(id, status, stage);
+      }
+
+      function hireCandidate(id, name) {
+        if(!confirm(`Are you sure you want to HIRE ${name}? This will create their employee account and folders.`)) return;
+        
+        setStatus('recruitment-status', 'processing', 'Hiring candidate & creating assets...');
+        google.script.run
+          .withSuccessHandler(msg => {
+            setStatus('recruitment-status', 'success', msg);
+            loadCandidates();
+          })
+          .withFailureHandler(err => setStatus('recruitment-status', 'error', err.message))
+          .webHireCandidate(id);
+      }
+
+      // ====================================
+// === PHASE 3: RECRUITMENT JS ===
+// ====================================
+
+function loadRecruitmentAdmin() {
+  const list = document.getElementById('candidate-list');
+  list.innerHTML = '<p class="text-color-secondary">Loading pipeline...</p>';
+  
+  google.script.run
+    .withSuccessHandler(candidates => {
+      if (candidates.length === 0) {
+        list.innerHTML = '<p class="text-color-secondary">No candidates found.</p>';
+        return;
+      }
+      
+      let html = '';
+      candidates.forEach(c => {
+        // Badge Color Logic
+        let badgeClass = 'status-pending';
+        if(c.status === 'Hired') badgeClass = 'status-approved';
+        if(c.status === 'Rejected') badgeClass = 'status-denied';
+
+        // Action Buttons
+        let actions = '';
+        if (c.status !== 'Hired') {
+          actions = `
+            <div style="display:flex; gap:5px; margin-top:10px;">
+              <button class="view-btn" onclick="updateCandidateStatus('${c.id}', 'Active', 'Interview 1')">Interview 1</button>
+              <button class="view-btn" onclick="updateCandidateStatus('${c.id}', 'Active', 'Offer Sent')">Offer Sent</button>
+              <button class="submit-btn-green" onclick="openHireModal('${c.id}', '${c.name}', '${c.email}', '${c.phone}', '${c.nationalId}')">HIRE</button>
+              <button class="deny-btn" onclick="updateCandidateStatus('${c.id}', 'Rejected', 'Rejected')">Reject</button>
+            </div>
+          `;
+        } else {
+          actions = `<p style="color:green; font-weight:bold; margin-top:10px;">✅ Employee Created</p>`;
+        }
+
+        html += `
+          <div class="request-list-item candidate-item">
+            <div class="item-details">
+              <h4>${c.name} <span class="text-color-secondary">(${c.position})</span></h4>
+              <p><strong>Email:</strong> ${c.email} | <strong>Phone:</strong> ${c.phone}</p>
+              <p><strong>Applied:</strong> ${c.date} | <strong>Stage:</strong> ${c.stage}</p>
+              <p><a href="${c.cv}" target="_blank" style="color:var(--konecta-blue);">View CV</a></p>
+            </div>
+            <div class="item-actions">
+              <span class="status-badge ${badgeClass}">${c.status}</span>
+              ${actions}
+            </div>
+          </div>
+        `;
+      });
+      list.innerHTML = html;
+    })
+    .withFailureHandler(err => list.innerHTML = `<p class="status-message error visible">${err.message}</p>`)
+    .webGetCandidates();
+}
+
+// --- REQUISITION LOGIC ---
+function showRequisitionModal() {
+  document.getElementById('req-modal-backdrop').style.display = 'block';
+  document.getElementById('req-modal').style.display = 'flex';
+}
+
+function closeReqModal() {
+  document.getElementById('req-modal-backdrop').style.display = 'none';
+  document.getElementById('req-modal').style.display = 'none';
+}
+
+function submitRequisition() {
+  const data = {
+    title: document.getElementById('req-title').value,
+    department: document.getElementById('req-dept').value,
+    hiringManager: document.getElementById('req-manager').value,
+    description: document.getElementById('req-desc').value
+  };
+  
+  if(!data.title || !data.hiringManager) {
+    alert("Title and Hiring Manager are required.");
+    return;
+  }
+
+  // Disable button
+  const btn = document.querySelector('#req-modal .btn-primary');
+  btn.innerText = "Creating...";
+  btn.disabled = true;
+
+  google.script.run
+    .withSuccessHandler(msg => {
+      alert(msg);
+      closeReqModal();
+      btn.innerText = "Open Position";
+      btn.disabled = false;
+    })
+    .webCreateRequisition(data);
+}
+
+// --- CANDIDATE UPDATE LOGIC ---
+function updateCandidateStatus(id, status, stage) {
+  if(!confirm(`Change status to ${stage}?`)) return;
+  
+  google.script.run
+    .withSuccessHandler(() => {
+      loadRecruitmentAdmin(); // Refresh list
+    })
+    .webUpdateCandidateStatus(id, status, stage);
+}
+
+// --- HIRING WIZARD LOGIC ---
+function openHireModal(id, name, email, phone, natId) {
+  document.getElementById('hire-candidate-id').value = id;
+  document.getElementById('hire-fullname').value = name;
+  document.getElementById('hire-nat-id').value = natId || ""; // Pre-fill if available
+  
+  // Pre-fill personal email as a fallback, IT usually creates a new one
+  // document.getElementById('hire-k-email').value = ""; 
+  
+  document.getElementById('hire-modal-backdrop').style.display = 'block';
+  document.getElementById('hire-modal').style.display = 'flex';
+}
+
+function closeHireModal() {
+  document.getElementById('hire-modal-backdrop').style.display = 'none';
+  document.getElementById('hire-modal').style.display = 'none';
+  setStatus('hire-status', '', '');
+}
+
+function submitHire() {
+  const candidateId = document.getElementById('hire-candidate-id').value;
+  
+  // Gather all fields
+  const hiringData = {
+    fullName: document.getElementById('hire-fullname').value,
+    konectaEmail: document.getElementById('hire-k-email').value,
+    title: document.getElementById('hire-title').value,
+    department: document.getElementById('hire-dept').value,
+    jobLevel: document.getElementById('hire-level').value,
+    contractType: document.getElementById('hire-contract').value,
+    hiringDate: document.getElementById('hire-date').value,
+    
+    directManager: document.getElementById('hire-direct-mgr').value,
+    projectManager: document.getElementById('hire-project-mgr').value,
+    dottedManager: document.getElementById('hire-dotted-mgr').value,
+    
+    salary: document.getElementById('hire-salary').value,
+    hourlyRate: document.getElementById('hire-hourly').value,
+    bonusPlan: document.getElementById('hire-bonus').value,
+    iban: "", // Can be added if you have an input for it
+    
+    nationalId: document.getElementById('hire-nat-id').value,
+    passport: document.getElementById('hire-passport').value,
+    socialInsurance: document.getElementById('hire-social').value,
+    birthDate: document.getElementById('hire-dob').value,
+    maritalStatus: document.getElementById('hire-marital').value,
+    address: document.getElementById('hire-address').value,
+    emergencyContact: document.getElementById('hire-emergency').value,
+    
+    // Defaults
+    gender: "", 
+    empType: "Full-Time",
+    gcm: "",
+    scope: "",
+    shore: "",
+    nLevel: ""
+  };
+
+  // Basic Validation
+  if(!hiringData.hiringDate || !hiringData.konectaEmail || !hiringData.directManager || !hiringData.salary) {
+    setStatus('hire-status', 'error', "Please fill in all required fields (Email, Direct Manager, Salary, Hiring Date).");
+    return;
+  }
+
+  setStatus('hire-status', 'processing', 'Creating Employee Record and Drive Folders...');
+
+  google.script.run
+    .withSuccessHandler(msg => {
+      setStatus('hire-status', 'success', msg);
+      setTimeout(() => {
+        closeHireModal();
+        loadRecruitmentAdmin(); // Refresh list
+      }, 2000);
+    })
+    .withFailureHandler(err => {
+      setStatus('hire-status', 'error', err.message);
+    })
+    .webHireCandidate(candidateId, hiringData);
+}
+
+function filterCandidates() {
+  const input = document.getElementById('candidate-search');
+  const filter = input.value.toLowerCase();
+  const nodes = document.getElementsByClassName('candidate-item');
+
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].innerText.toLowerCase().includes(filter)) {
+      nodes[i].style.display = "flex";
+    } else {
+      nodes[i].style.display = "none";
+    }
+  }
+}
+
+// ====================================
+// === PHASE 5: PERFORMANCE JS ===
+// ====================================
+
+function loadPerformanceTab() {
+  // 1. Show Manager Section if Admin
+  if (selfRole === 'admin' || selfRole === 'superadmin' || selfRole === 'manager' || selfRole === 'project_manager') {
+    document.getElementById('manager-review-section').style.display = 'block';
+    // Reuse your existing populate dropdown logic
+    populateAdminDropdown(allUsersList, selfUserName, 'perf-employee-select', 'Select Employee');
+    
+    // Populate Offboarding dropdown too (since we are here)
+    populateAdminDropdown(allUsersList, selfUserName, 'offboard-user-select', 'Select Employee to Offboard');
+  }
+
+  // 2. Load My History
+  loadPerformanceHistory();
+}
+
+function loadPerformanceHistory() {
+  const list = document.getElementById('perf-history-list');
+  list.innerHTML = '<p class="text-color-secondary">Loading reviews...</p>';
+
+  google.script.run
+    .withSuccessHandler(reviews => {
+      if (reviews.length === 0) {
+        list.innerHTML = '<p class="text-color-secondary">No performance reviews found.</p>';
+        return;
+      }
+      let html = '';
+      reviews.forEach(r => {
+        // Star Rating Visual
+        const stars = '⭐'.repeat(r.rating);
+        html += `
+          <div class="request-list-item">
+            <div class="item-details">
+              <h4>${r.year} - ${r.period} Review</h4>
+              <p><strong>Rating:</strong> ${r.rating}/5 ${stars}</p>
+              <p style="white-space: pre-wrap; margin-top:5px;">${r.comments}</p>
+              <small class="text-color-secondary">Date: ${r.date}</small>
+            </div>
+          </div>
+        `;
+      });
+      list.innerHTML = html;
+    })
+    .withFailureHandler(err => list.innerHTML = `<p class="status-message error visible">${err.message}</p>`)
+    .webGetPerformanceHistory(null); // null = get my own
+}
+
+function submitPerformanceReview() {
+  const data = {
+    employeeEmail: document.getElementById('perf-employee-select').value,
+    period: document.getElementById('perf-period').value,
+    year: document.getElementById('perf-year').value,
+    rating: document.getElementById('perf-rating').value,
+    comments: document.getElementById('perf-comments').value
+  };
+
+  if (!data.employeeEmail) {
+    setStatus('perf-submit-status', 'error', 'Please select an employee.');
+    return;
+  }
+
+  setStatus('perf-submit-status', 'processing', 'Submitting review...');
+
+  google.script.run
+    .withSuccessHandler(msg => {
+      setStatus('perf-submit-status', 'success', msg);
+      document.getElementById('perf-comments').value = ''; // Clear comments
+    })
+    .withFailureHandler(err => {
+      setStatus('perf-submit-status', 'error', err.message);
+    })
+    .webSubmitPerformanceReview(data);
+}
+
+// ====================================
+// === PHASE 5: OFFBOARDING JS ===
+// ====================================
+
+function submitOffboarding() {
+  const email = document.getElementById('offboard-user-select').value;
+  const date = document.getElementById('offboard-date').value;
+  const reason = document.getElementById('offboard-reason').value;
+
+  if (!email || !date) {
+    setStatus('offboard-status', 'error', 'Employee and Exit Date are required.');
+    return;
+  }
+
+  if (!confirm(`Are you sure you want to mark ${email} as LEFT? This action cannot be easily undone.`)) return;
+
+  setStatus('offboard-status', 'processing', 'Processing exit...');
+
+  google.script.run
+    .withSuccessHandler(msg => {
+      setStatus('offboard-status', 'success', msg);
+      // Optional: Refresh user list to reflect status change (would require page reload or data refresh)
+    })
+    .withFailureHandler(err => {
+      setStatus('offboard-status', 'error', err.message);
+    })
+    .webOffboardEmployee({ email: email, exitDate: date, reason: reason });
+}
+
+// --- JOB BOARD LOGIC ---
+function toggleJobBoard() {
+    const div = document.getElementById('job-board-view');
+    if (div.style.display === 'none') {
+        div.style.display = 'block';
+        loadJobBoard();
+    } else {
+        div.style.display = 'none';
+    }
+}
+
+function loadJobBoard() {
+    google.script.run.withSuccessHandler(jobs => {
+        const container = document.getElementById('job-list-container');
+        if (jobs.length === 0) { container.innerHTML = 'No active requisitions.'; return; }
+        
+        let html = '<table class="report-table"><thead><tr><th>Title</th><th>Manager</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+        jobs.forEach(j => {
+            html += `<tr>
+                <td>${j.title} <br><small class="text-color-secondary">${j.dept}</small></td>
+                <td>${j.manager}</td>
+                <td>${j.date}</td>
+                <td><span class="status-badge ${j.status === 'Open' ? 'status-approved' : 'status-denied'}">${j.status}</span></td>
+                <td>
+                    <button class="deny-btn" style="padding: 4px 8px; font-size: 0.8rem;" onclick="archiveJob('${j.id}')">Archive</button>
+                </td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    }).webGetRequisitions('Open');
+}
+
+function archiveJob(id) {
+    if(!confirm("Archive this job post?")) return;
+    google.script.run.withSuccessHandler(() => loadJobBoard()).webManageRequisition(id, 'Archive', {});
+}
+
+// --- CANDIDATE ACTIONS ---
+
+function loadRecruitmentAdmin() { // Replaces existing loadRecruitmentAdmin
+  const list = document.getElementById('candidate-list');
+  list.innerHTML = '<p class="text-color-secondary">Loading pipeline...</p>';
+  
+  google.script.run.withSuccessHandler(candidates => {
+      if (candidates.length === 0) { list.innerHTML = '<p class="text-color-secondary">No candidates found.</p>'; return; }
+      
+      let html = '';
+      candidates.forEach(c => {
+        let badgeClass = c.status === 'Hired' ? 'status-approved' : c.status === 'Rejected' ? 'status-denied' : 'status-pending';
+        
+        // History Check (Simulated for UI - call backend for details)
+        let historyBtn = `<button class="view-btn" onclick="checkHistory('${c.email}')" style="font-size:0.75rem; margin-left:5px;">📜 History</button>`;
+
+        let actions = '';
+        if (c.status !== 'Hired' && c.status !== 'Rejected') {
+          actions = `
+            <div style="display:flex; gap:5px; margin-top:10px; flex-wrap:wrap;">
+              <button class="view-btn" onclick="updateCandidateStatus('${c.id}', 'Active', 'Interview 1')">Interview</button>
+              <button class="view-btn" style="background:var(--konecta-yellow); color:#000;" onclick="sendOffer('${c.id}')">Send Offer</button>
+              <button class="submit-btn-green" onclick="openHireModal('${c.id}', '${c.name}', '${c.email}', '${c.phone}', '${c.nationalId}')">HIRE</button>
+              <button class="deny-btn" onclick="openRejectModal('${c.id}')">Reject</button>
+            </div>
+          `;
+        } else {
+            actions = `<p style="margin-top:5px; font-size:0.9rem;">Process Complete.</p>`;
+        }
+
+        html += `
+          <div class="request-list-item candidate-item">
+            <div class="item-details">
+              <h4>${c.name} <span class="text-color-secondary">(${c.position})</span> ${historyBtn}</h4>
+              <p><strong>Email:</strong> ${c.email}</p>
+              <p><strong>Stage:</strong> ${c.stage} | <strong>Status:</strong> <span class="status-badge ${badgeClass}">${c.status}</span></p>
+              <p><a href="${c.cv}" target="_blank" style="color:var(--konecta-blue);">View CV</a></p>
+            </div>
+            <div class="item-actions" style="width:100%; max-width:400px; text-align:right;">
+              ${actions}
+            </div>
+          </div>
+        `;
+      });
+      list.innerHTML = html;
+  }).webGetCandidates();
+}
+
+// --- ACTION HANDLERS ---
+
+function checkHistory(email) {
+    google.script.run.withSuccessHandler(hist => {
+        let msg = hist.length > 0 ? hist.map(h => `${h.date}: ${h.position} (${h.status})`).join('\n') : "No previous applications found.";
+        alert("Candidate History:\n" + msg);
+    }).webGetCandidateHistory(email);
+}
+
+function openRejectModal(id) {
+    document.getElementById('reject-candidate-id').value = id;
+    document.getElementById('reject-modal-backdrop').style.display = 'block';
+    document.getElementById('reject-modal').style.display = 'flex';
+}
+
+function closeRejectModal() {
+    document.getElementById('reject-modal-backdrop').style.display = 'none';
+    document.getElementById('reject-modal').style.display = 'none';
+}
+
+function submitRejection() {
+    const id = document.getElementById('reject-candidate-id').value;
+    const reason = document.getElementById('reject-reason').value;
+    const sendEmail = document.getElementById('reject-send-email').checked;
+    
+    setStatus('recruitment-status', 'processing', 'Processing rejection...');
+    closeRejectModal();
+    
+    google.script.run.withSuccessHandler(msg => {
+        setStatus('recruitment-status', 'success', msg);
+        loadRecruitmentAdmin();
+    }).webSendRejectionEmail(id, reason, sendEmail);
+}
+
+function sendOffer(id) {
+    // For simplicity, prompt for details. In production, use a modal.
+    const startDate = prompt("Enter Offer Start Date (YYYY-MM-DD):", new Date().toISOString().split('T')[0]);
+    if(!startDate) return;
+    const basic = prompt("Enter Basic Salary:");
+    const variable = prompt("Enter Variable/Bonus:");
+    
+    if(confirm(`Send offer email to candidate?\nStart: ${startDate}\nBasic: ${basic}\nVar: ${variable}`)) {
+        setStatus('recruitment-status', 'processing', 'Sending offer...');
+        google.script.run.withSuccessHandler(msg => {
+            alert(msg);
+            loadRecruitmentAdmin();
+        }).webSendOfferLetter(id, {startDate, basic, variable});
+    }
+}
+
+// Update submitHire to include new Variable field
+function submitHire() {
+    const candidateId = document.getElementById('hire-candidate-id').value;
+    const hiringData = {
+        // ... (Existing fields: fullName, konectaEmail, directManager, etc.)
+        fullName: document.getElementById('hire-fullname').value,
+        konectaEmail: document.getElementById('hire-k-email').value,
+        title: document.getElementById('hire-title').value,
+        department: document.getElementById('hire-dept').value,
+        contractType: document.getElementById('hire-contract').value,
+        hiringDate: document.getElementById('hire-date').value,
+        directManager: document.getElementById('hire-direct-mgr').value,
+        salary: document.getElementById('hire-salary').value,
+        // NEW FIELDS
+        variable: document.getElementById('hire-variable').value, 
+        // ... (Include all other existing fields)
+        nationalId: document.getElementById('hire-nat-id').value,
+        address: document.getElementById('hire-address').value
     };
+    
+    // Validation logic...
+    setStatus('hire-status', 'processing', 'Creating Employee Record...');
+    google.script.run.withSuccessHandler(msg => {
+        setStatus('hire-status', 'success', msg);
+        setTimeout(() => { closeHireModal(); loadRecruitmentAdmin(); }, 2000);
+    }).webHireCandidate(candidateId, hiringData);
+}
 
-    exportRows.push({
-        Date: dateStr,
-        Name: agentName,
-        Email: email,
-        Status: row[13],
-        Login: formatTime(row[2]),
-        Logout: formatTime(row[9]),
-        NetWorkedHours: (parseFloat(row[22]) || 0).toFixed(2),
-        LatenessMins: Math.round((row[10]||0)/60),
-        EarlyLeaveMins: Math.round((row[12]||0)/60),
-        BreakExceedMins: Math.round(((row[16]||0) + (row[18]||0))/60),
-        LunchExceedMins: Math.round((row[17]||0)/60),
-        ApprovedOTHours: approvedOTHours.toFixed(2),
-        OTType: otType,
-        IsAbsent: row[19]
+// --- USER VIEW ---
+function loadMyFinancials() {
+  const container = document.getElementById('my-entitlements-list');
+  
+  google.script.run.withSuccessHandler(data => {
+    // 1. Update Salary Cards
+    document.getElementById('fin-basic').innerText = data.salary.basic.toLocaleString();
+    document.getElementById('fin-variable').innerText = data.salary.variable.toLocaleString();
+    document.getElementById('fin-total').innerText = data.salary.total.toLocaleString();
+
+    // 2. Update List
+    if (data.entitlements.length === 0) {
+      container.innerHTML = '<p class="text-color-secondary">No upcoming payments found.</p>';
+      return;
+    }
+    
+    let html = '';
+    data.entitlements.forEach(e => {
+      let color = e.type === 'Deduction' ? 'var(--status-error-text)' : 'var(--konecta-dark)';
+      html += `
+        <div class="request-list-item">
+          <div class="item-details">
+            <h4>${e.type}</h4>
+            <p>${e.desc}</p>
+            <small class="text-color-secondary">Due: ${formatDate(e.date)}</small>
+          </div>
+          <div class="item-actions" style="text-align:right;">
+            <strong style="color:${color}; font-size:1.2rem;">${Number(e.amount).toLocaleString()} ${e.currency}</strong>
+            <br><span class="status-badge ${e.status === 'Paid' ? 'status-approved' : 'status-pending'}">${e.status}</span>
+          </div>
+        </div>`;
+    });
+    container.innerHTML = html;
+  }).webGetMyFinancials();
+}
+
+// Hook into profile tab switcher
+// Update switchProfileSubTab to call loadMyFinancials() if tabName === 'finance'
+
+// --- ADMIN VIEW ---
+function submitEntitlement() {
+  const data = {
+    email: document.getElementById('fin-email').value,
+    type: document.getElementById('fin-type').value,
+    amount: document.getElementById('fin-amount').value,
+    date: document.getElementById('fin-date').value,
+    desc: document.getElementById('fin-desc').value
+  };
+  
+  if(!data.email || !data.amount) {
+    setStatus('finance-status', 'error', 'Email and Amount are required.');
+    return;
+  }
+
+  setStatus('finance-status', 'processing', 'Submitting...');
+  
+  google.script.run.withSuccessHandler(msg => {
+    setStatus('finance-status', 'success', msg);
+    // Clear form
+    document.getElementById('fin-amount').value = '';
+    document.getElementById('fin-desc').value = '';
+  }).withFailureHandler(err => {
+    setStatus('finance-status', 'error', err.message);
+  }).webSubmitEntitlement(data);
+}
+
+function uploadFinanceCSV() {
+  const fileInput = document.getElementById('fin-csv-upload');
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    const data = parseCSV(text); // Uses existing helper
+    
+    setStatus('finance-status', 'processing', `Uploading ${data.length} records...`);
+    
+    google.script.run.withSuccessHandler(msg => {
+      setStatus('finance-status', 'success', msg);
+    }).withFailureHandler(err => {
+      setStatus('finance-status', 'error', err.message);
+    }).webUploadEntitlementsCSV(data);
+  };
+  reader.readAsText(file);
+}
+
+/**
+ * REUSABLE COMPONENT: Searchable Multi-Select Dropdown
+ * UPDATED: Now accepts a defaultVal to pre-select an option.
+ */
+function renderGlobalUserSelector(containerId, users, placeholder, isMulti, onCallback, defaultVal = null) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  container.innerHTML = '';
+  container.className = 'multi-select-wrapper';
+
+  // State: Initialize with default value if provided
+  let selectedValues = new Set();
+  if (defaultVal) {
+      if (Array.isArray(defaultVal)) defaultVal.forEach(v => selectedValues.add(v));
+      else selectedValues.add(defaultVal);
+  }
+
+  // UI Elements
+  const trigger = document.createElement('div');
+  trigger.className = 'multi-select-trigger';
+  // Placeholder will be updated by updateUI() immediately if there is a default
+  trigger.innerHTML = `<span class="trigger-text">${placeholder}</span><span class="arrow">▼</span>`;
+  
+  const dropdown = document.createElement('div');
+  dropdown.className = 'multi-select-dropdown';
+  
+  const searchBox = document.createElement('div');
+  searchBox.className = 'dropdown-search-container';
+  searchBox.innerHTML = `<input type="text" class="dropdown-search-input" placeholder="Search...">`;
+  
+  const list = document.createElement('ul');
+  list.className = 'dropdown-options-list';
+
+  if(isMulti) {
+      const actions = document.createElement('div');
+      actions.className = 'dropdown-actions';
+      actions.innerHTML = `<button type="button" class="dropdown-action-btn" id="all-${containerId}">All</button> <button type="button" class="dropdown-action-btn" id="none-${containerId}">Clear</button>`;
+      dropdown.appendChild(actions);
+  }
+
+  dropdown.appendChild(searchBox);
+  dropdown.appendChild(list);
+  container.appendChild(trigger);
+  container.appendChild(dropdown);
+
+  // Render Function
+  function renderOptions(filter = '') {
+    list.innerHTML = '';
+    const f = filter.toLowerCase();
+    const sorted = [...users].sort((a,b) => a.name.localeCompare(b.name));
+
+    sorted.forEach(u => {
+      if (u.name.toLowerCase().includes(f) || u.email.toLowerCase().includes(f)) {
+        const li = document.createElement('li');
+        li.className = `dropdown-option ${selectedValues.has(u.email) ? 'selected' : ''}`;
+        li.dataset.email = u.email;
+        li.innerHTML = `
+          <input type="${isMulti ? 'checkbox' : 'radio'}" ${selectedValues.has(u.email) ? 'checked' : ''}>
+          <div><div style="font-weight:500">${u.name}</div><div style="font-size:0.75rem;color:#666">${u.email}</div></div>
+        `;
+        li.onclick = (e) => {
+            e.stopPropagation();
+            toggleSelect(u.email, u.name);
+        };
+        list.appendChild(li);
+      }
     });
   }
-  return exportRows;
-}
 
-//.............................................................................................................................
+  function toggleSelect(email, name) {
+    if (!isMulti) {
+        selectedValues.clear();
+        selectedValues.add(email);
+        dropdown.classList.remove('open');
+    } else {
+        if (selectedValues.has(email)) selectedValues.delete(email);
+        else selectedValues.add(email);
+    }
+    updateUI();
+    if (onCallback) onCallback(Array.from(selectedValues));
+  }
 
-
-
-
-
-
-
-function _MASTER_DB_FIXER() {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  Logger.log("Starting Master DB Fixer...");
-
-  const schema = {
-    // ... (Keep all existing schemas same as before) ...
-    [SHEET_NAMES.rbac]: ["PermissionID", "Description", "superadmin", "admin", "manager", "project_manager", "financial_manager", "agent"],
-    [SHEET_NAMES.employeesCore]: ["EmployeeID", "Name", "Email", "Role", "AccountStatus", "DirectManagerEmail", "FunctionalManagerEmail", "AnnualBalance", "SickBalance", "CasualBalance", "Gender", "EmploymentType", "ContractType", "JobLevel", "Department", "Function", "SubFunction", "GCMLevel", "Scope", "OffshoreOnshore", "DottedManager", "ProjectManagerEmail", "BonusPlan", "N_Level", "ExitDate", "Status"],
-    [SHEET_NAMES.employeesPII]: ["EmployeeID", "HiringDate", "Salary", "IBAN", "Address", "Phone", "MedicalInfo", "ContractType", "NationalID", "PassportNumber", "SocialInsuranceNumber", "BirthDate", "PersonalEmail", "MaritalStatus", "DependentsInfo", "EmergencyContact", "EmergencyRelation", "BasicSalary", "VariablePay", "HourlyRate"],
-    [SHEET_NAMES.financialEntitlements]: ["EntitlementID", "EmployeeEmail", "EmployeeName", "Type", "Amount", "Currency", "DueDate", "Status", "Description", "AddedBy", "DateAdded"],
-    ["Entitlement_Templates"]: ["TemplateID", "Name", "Type", "DefaultAmount", "Currency", "Description", "Status"],
-    [SHEET_NAMES.pendingRegistrations]: ["RequestID", "UserEmail", "UserName", "DirectManagerEmail", "FunctionalManagerEmail", "DirectStatus", "FunctionalStatus", "Address", "Phone", "RequestTimestamp", "HiringDate", "WorkflowStage"],
-    [SHEET_NAMES.recruitment]: ["CandidateID", "Name", "Email", "Phone", "Position", "CV_Link", "Status", "Stage", "InterviewScores", "AppliedDate", "NationalID", "LangLevel", "SecondLang", "Referrer", "HR_Feedback", "Mgmt_Feedback", "Tech_Feedback", "Client_Feedback", "OfferStatus", "RejectionReason", "HistoryLog"],
-    [SHEET_NAMES.requisitions]: ["ReqID", "Title", "Department", "HiringManager", "OpenDate", "Status", "PoolCandidates", "JobDescription"],
-    [SHEET_NAMES.performance]: ["ReviewID", "EmployeeID", "Year", "ReviewPeriod", "Rating", "ManagerComments", "Date"],
-    [SHEET_NAMES.historyLogs]: ["HistoryID", "EmployeeID", "Date", "EventType", "OldValue", "NewValue"],
-    [SHEET_NAMES.adherence]: ["Date", "User Name", "Login", "First Break In", "First Break Out", "Lunch In", "Lunch Out", "Last Break In", "Last Break Out", "Logout", "Tardy (Seconds)", "Overtime (Seconds)", "Early Leave (Seconds)", "Leave Type", "Admin Audit", "—", "1st Break Exceed", "Lunch Exceed", "Last Break Exceed", "Absent", "Admin Code", "BreakWindowViolation", "NetLoginHours", "PreShiftOvertime", "LastAction", "LastActionTimestamp"],
-    [SHEET_NAMES.schedule]: ["Name", "StartDate", "ShiftStartTime", "EndDate", "ShiftEndTime", "LeaveType", "agent email"],
-    [SHEET_NAMES.logs]: ["Timestamp", "User Name", "Email", "Action", "Time"],
-    [SHEET_NAMES.otherCodes]: ["Date", "User Name", "Code", "Time In", "Time Out", "Duration (Seconds)", "Admin Audit (Email)"],
-    [SHEET_NAMES.warnings]: ["WarningID", "EmployeeID", "Type", "Level", "Date", "Description", "Status", "IssuedBy"],
-    [SHEET_NAMES.coachingSessions]: ["SessionID", "AgentEmail", "AgentName", "CoachEmail", "CoachName", "SessionDate", "WeekNumber", "OverallScore", "FollowUpComment", "SubmissionTimestamp", "FollowUpDate", "FollowUpStatus", "AgentAcknowledgementTimestamp"],
-    [SHEET_NAMES.coachingScores]: ["SessionID", "Category", "Criteria", "Score", "Comment"],
-    [SHEET_NAMES.coachingTemplates]: ["TemplateName", "Category", "Criteria", "Status"],
-    [SHEET_NAMES.leaveRequests]: ["RequestID", "Status", "RequestedByEmail", "RequestedByName", "LeaveType", "StartDate", "EndDate", "TotalDays", "Reason", "ActionDate", "ActionBy", "SupervisorEmail", "ActionReason", "SickNoteURL", "DirectManagerSnapshot", "ProjectManagerSnapshot"],
-    [SHEET_NAMES.movementRequests]: ["MovementID", "Status", "UserToMoveEmail", "UserToMoveName", "FromSupervisorEmail", "ToSupervisorEmail", "RequestTimestamp", "ActionTimestamp", "ActionByEmail", "RequestedByEmail", "ToProjectManagerEmail"], 
-    [SHEET_NAMES.roleRequests]: ["RequestID", "UserEmail", "UserName", "CurrentRole", "RequestedRole", "Justification", "RequestTimestamp", "Status", "ActionByEmail", "ActionTimestamp"],
-    [SHEET_NAMES.projects]: ["ProjectID", "ProjectName", "ProjectManagerEmail", "AllowedRoles"],
-    [SHEET_NAMES.projectLogs]: ["LogID", "EmployeeID", "ProjectID", "Date", "HoursLogged"],
-    [SHEET_NAMES.announcements]: ["AnnouncementID", "Content", "Status", "CreatedByEmail", "Timestamp"],
-    [SHEET_NAMES.assets]: ["AssetID", "Type", "AssignedTo_EmployeeID", "DateAssigned", "Status"],
-    [SHEET_NAMES.overtime]: ["RequestID", "EmployeeID", "EmployeeName", "ShiftDate", "PlannedStart", "PlannedEnd", "RequestedHours", "Reason", "Status", "ManagerComment", "ActionBy", "ActionDate", "Type", "DirectManager", "ProjectManager", "DirectStatus", "ProjectStatus", "InitiatedBy"],
+  function updateUI() {
+    const count = selectedValues.size;
+    const span = trigger.querySelector('.trigger-text');
+    if (count === 0) {
+        span.textContent = placeholder;
+        span.style.color = '#666';
+    } else if (count === 1) {
+        const email = Array.from(selectedValues)[0];
+        const user = users.find(u => u.email === email);
+        span.textContent = user ? user.name : email; // Show Name
+        span.style.color = '#333';
+    } else {
+        span.textContent = `${count} Selected`;
+        span.style.color = 'var(--konecta-blue)';
+    }
     
-    // NEW OFFBOARDING SCHEMA
-    [SHEET_NAMES.offboarding]: ["RequestID", "EmployeeID", "Name", "Email", "Type", "Reason", "Status", "DirectManager", "ProjectManager", "DirectStatus", "ProjectStatus", "HRStatus", "RequestDate", "ExitDate", "InitiatedBy"]
+    // Re-render list to update checkboxes/highlights
+    renderOptions(searchBox.querySelector('input').value);
+  }
+
+  // Events
+  trigger.onclick = (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.multi-select-dropdown').forEach(d => { if(d!==dropdown) d.classList.remove('open'); });
+      dropdown.classList.toggle('open');
+      if(dropdown.classList.contains('open')) searchBox.querySelector('input').focus();
   };
 
-  // Run Fixer
-  for (const [sheetName, headers] of Object.entries(schema)) {
-    let sheet = getOrCreateSheet(ss, sheetName);
-    const lastCol = sheet.getLastColumn();
-    let currentHeaders = [];
-    if (lastCol > 0) currentHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-    
-    const missingCols = [];
-    headers.forEach(h => { if (!currentHeaders.includes(h)) missingCols.push(h); });
-    
-    if (missingCols.length > 0) {
-      const startCol = lastCol === 0 ? 1 : lastCol + 1;
-      sheet.getRange(1, startCol, 1, missingCols.length).setValues([missingCols]);
-    }
+  searchBox.querySelector('input').onkeyup = (e) => renderOptions(e.target.value);
+
+  if(isMulti) {
+      document.getElementById(`all-${containerId}`).onclick = (e) => {
+          e.stopPropagation();
+          list.querySelectorAll('li').forEach(li => selectedValues.add(li.dataset.email));
+          updateUI();
+          if (onCallback) onCallback(Array.from(selectedValues));
+      };
+      document.getElementById(`none-${containerId}`).onclick = (e) => {
+          e.stopPropagation();
+          selectedValues.clear();
+          updateUI();
+          if (onCallback) onCallback([]);
+      };
   }
-  Logger.log("DB Fix Completed with Offboarding.");
-}
 
+  // Close on click outside
+  document.addEventListener('click', (e) => {
+      if (!container.contains(e.target)) dropdown.classList.remove('open');
+  });
 
-
-
-
-
-
-
-
-// HELPER: Generates the next permanent Employee ID (e.g., KOM-1005)
-function generateNextEmpID(sheet) {
-  const data = sheet.getDataRange().getValues();
-  let maxId = 1000; // Start from 1000
+  // Initial Render
+  renderOptions();
   
-  for (let i = 1; i < data.length; i++) {
-    const val = String(data[i][0]);
-    // Check if it's a permanent ID (starts with KOM- and is NOT Pending)
-    if (val.startsWith("KOM-") && !val.includes("PENDING")) {
-      const parts = val.split("-");
-      // Assuming format KOM-XXXX
-      const num = parseInt(parts[1]); 
-      if (!isNaN(num) && num > maxId) {
-        maxId = num;
-      }
-    }
+  // *** CRITICAL FIX: Apply default value immediately ***
+  if (defaultVal) {
+      updateUI();
+      if (onCallback) onCallback(Array.from(selectedValues));
   }
-  return `KOM-${maxId + 1}`;
 }
+
+
+// --- HR ADMIN FUNCTIONS ---
+
+function loadHrAdmin() {
+  // 1. Load Pending Requests
+  const reqList = document.getElementById('hr-data-requests-list');
+  reqList.innerHTML = '<p class="text-color-secondary">Loading...</p>';
+  google.script.run.withSuccessHandler(reqs => {
+    if (reqs.length === 0) {
+      reqList.innerHTML = '<p class="text-color-secondary">No pending data changes.</p>';
+    } else {
+      let html = '<ul style="padding-left: 20px; margin: 0;">';
+      reqs.forEach(r => {
+        html += `<li style="margin-bottom: 5px; font-size: 0.9rem;">
+          <strong>${r.date}:</strong> ${r.user} (${r.email}) - <span style="color: var(--konecta-blue);">${r.details}</span>
+        </li>`;
+      });
+      html += '</ul>';
+      reqList.innerHTML = html;
+    }
+  }).webGetPendingDataChanges();
+
+  // 2. Populate Dropdowns (Balance & Offboard)
+  // Reuse the global list
+  if (allUsersList.length > 0) {
+    populateAdminDropdown(allUsersList, selfUserName, 'hr-balance-user-select', 'Select User');
+    populateAdminDropdown(allUsersList, selfUserName, 'hr-offboard-user-select', 'Select Employee');
+  }
+}
+
+function searchEmployeePII() {
+  const query = document.getElementById('hr-pii-search').value;
+  if (!query) return;
+
+  setStatus('hr-pii-search-status', 'processing', 'Searching...');
+  document.getElementById('hr-pii-form-container').style.display = 'none';
+
+  google.script.run
+    .withSuccessHandler(data => {
+      setStatus('hr-pii-search-status', 'success', 'User found.');
+      const c = data.core;
+      const p = data.pii;
+
+      document.getElementById('hr-pii-form-container').style.display = 'block';
+      document.getElementById('hr-pii-header').innerText = `Editing: ${c.name} (${c.empID})`;
+      document.getElementById('hr-pii-empid').value = c.empID;
+
+      // Populate fields
+      document.getElementById('hr-pii-natid').value = p.NationalID || '';
+      document.getElementById('hr-pii-passport').value = p.PassportNumber || '';
+      document.getElementById('hr-pii-social').value = p.SocialInsuranceNumber || '';
+      document.getElementById('hr-pii-iban').value = p.IBAN || '';
+      document.getElementById('hr-pii-pemail').value = p.PersonalEmail || '';
+      document.getElementById('hr-pii-phone').value = p.Phone || '';
+      document.getElementById('hr-pii-address').value = p.Address || '';
+      document.getElementById('hr-pii-marital').value = p.MaritalStatus || 'Single';
+      document.getElementById('hr-pii-basic').value = p.BasicSalary || 0;
+      document.getElementById('hr-pii-variable').value = p.VariablePay || 0;
+    })
+    .withFailureHandler(err => {
+      setStatus('hr-pii-search-status', 'error', err.message);
+    })
+    .webSearchEmployeePII(query);
+}
+
+function saveEmployeePII() {
+  const empID = document.getElementById('hr-pii-empid').value;
+  const formData = {
+    NationalID: document.getElementById('hr-pii-natid').value,
+    PassportNumber: document.getElementById('hr-pii-passport').value,
+    SocialInsuranceNumber: document.getElementById('hr-pii-social').value,
+    IBAN: document.getElementById('hr-pii-iban').value,
+    PersonalEmail: document.getElementById('hr-pii-pemail').value,
+    Phone: document.getElementById('hr-pii-phone').value,
+    Address: document.getElementById('hr-pii-address').value,
+    MaritalStatus: document.getElementById('hr-pii-marital').value,
+    BasicSalary: document.getElementById('hr-pii-basic').value,
+    VariablePay: document.getElementById('hr-pii-variable').value
+  };
+
+  setStatus('hr-pii-search-status', 'processing', 'Saving PII...');
+  
+  google.script.run
+    .withSuccessHandler(msg => {
+      setStatus('hr-pii-search-status', 'success', msg);
+      document.getElementById('hr-pii-form-container').style.display = 'none';
+      document.getElementById('hr-pii-search').value = '';
+      loadHrAdmin(); // Refresh requests list if needed
+    })
+    .withFailureHandler(err => setStatus('hr-pii-search-status', 'error', err.message))
+    .webUpdateEmployeePII(empID, formData);
+}
+
+// Wrapper for Balance Adjustment (using HR tab IDs)
+function submitHrBalanceAdjustment() {
+  // Temporarily map HR IDs to the backend function logic
+  const userEmail = document.getElementById('hr-balance-user-select').value;
+  const type = document.getElementById('hr-balance-type').value;
+  const amount = parseFloat(document.getElementById('hr-balance-amount').value);
+  const reason = document.getElementById('hr-balance-reason').value;
+
+  if (!userEmail || !amount || !reason) {
+    setStatus('hr-balance-status', 'error', 'All fields are required.');
+    return;
+  }
+
+  setStatus('hr-balance-status', 'processing', 'Updating balance...');
+  google.script.run.withSuccessHandler(msg => {
+    setStatus('hr-balance-status', 'success', msg);
+    document.getElementById('hr-balance-amount').value = '';
+    document.getElementById('hr-balance-reason').value = '';
+  }).withFailureHandler(err => setStatus('hr-balance-status', 'error', err.message))
+  .webAdjustLeaveBalance(userEmail, type, amount, reason);
+}
+
+// Wrapper for Offboarding (using HR tab IDs)
+function submitHrOffboarding() {
+  const email = document.getElementById('hr-offboard-user-select').value;
+  const date = document.getElementById('hr-offboard-date').value;
+  const reason = document.getElementById('hr-offboard-reason').value;
+
+  if (!email || !date) {
+    setStatus('hr-offboard-status', 'error', 'Required fields missing.');
+    return;
+  }
+  if (!confirm("Confirm offboarding for " + email + "?")) return;
+
+  setStatus('hr-offboard-status', 'processing', 'Processing...');
+  google.script.run.withSuccessHandler(msg => {
+    setStatus('hr-offboard-status', 'success', msg);
+  }).withFailureHandler(err => setStatus('hr-offboard-status', 'error', err.message))
+  .webOffboardEmployee({email, exitDate: date, reason});
+}
+
+
+
+// --- OVERTIME FUNCTIONS ---
+
+function loadOvertimeTab() {
+  document.getElementById('ot-req-date').valueAsDate = new Date();
+  
+  // Show assignment toggle for managers
+  if (['admin','superadmin','manager','project_manager'].includes(selfRole)) {
+      document.getElementById('ot-assign-toggle').style.display = 'block';
+      populateAdminDropdown(allUsersList, selfUserName, 'ot-employee-select', 'Select Agent');
+  }
+  loadOvertimeRequests();
+}
+
+function toggleOtAssignment() {
+    const isAssign = document.getElementById('ot-is-assignment').checked;
+    document.getElementById('ot-employee-select-wrapper').style.display = isAssign ? 'block' : 'none';
+}
+
+
+function submitOtRequest() {
+  const isAssignment = document.getElementById('ot-is-assignment').checked;
+  const targetEmail = isAssignment ? document.getElementById('ot-employee-select').value : null;
+
+  if (isAssignment && !targetEmail) {
+      setStatus('ot-status', 'error', 'Please select an agent.');
+      return;
+  }
+
+  const data = {
+    targetEmail: targetEmail, // Null if self-request
+    date: document.getElementById('ot-req-date').value,
+    type: document.getElementById('ot-req-type').value,
+    startTime: document.getElementById('ot-req-start').value,
+    endTime: document.getElementById('ot-req-end').value,
+    reason: document.getElementById('ot-req-reason').value
+  };
+
+  setStatus('ot-status', 'processing', 'Submitting...');
+  google.script.run.withSuccessHandler(msg => {
+      setStatus('ot-status', 'success', msg);
+      loadOvertimeRequests();
+  }).withFailureHandler(err => setStatus('ot-status', 'error', err.message))
+  .webSubmitOvertimeRequest(data);
+}
+
+
+function submitPreApproval() {
+  const data = {
+    email: document.getElementById('ot-employee-select').value,
+    date: document.getElementById('ot-pre-date').value,
+    hours: document.getElementById('ot-pre-hours').value
+  };
+  const comment = document.getElementById('ot-pre-comment').value;
+
+  if (!data.email || !data.date || !data.hours) {
+    alert("Please fill in Employee, Date, and Hours.");
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(msg => {
+      alert(msg);
+      loadOvertimeRequests();
+    })
+    .withFailureHandler(err => alert("Error: " + err.message))
+    .webActionOvertime(null, 'Pre-Approve', comment, data);
+}
+
+function loadOvertimeRequests() {
+  const filter = document.getElementById('ot-filter-status').value;
+  const list = document.getElementById('ot-request-list');
+  list.innerHTML = '<p class="text-color-secondary">Loading...</p>';
+
+  google.script.run.withSuccessHandler(reqs => {
+      if(reqs.length === 0) { list.innerHTML = '<p class="text-color-secondary">No records found.</p>'; return; }
+      
+      let html = '';
+      reqs.forEach(r => {
+          let actions = '';
+          // Show buttons if Pending AND User has permission
+          if (r.status.includes('Pending') && ['admin','superadmin','manager','project_manager'].includes(selfRole)) {
+              actions = `
+                <div style="margin-top:8px;">
+                   <button class="approve-btn" onclick="actionOvertime('${r.id}','Approved')">Approve</button>
+                   <button class="deny-btn" onclick="actionOvertime('${r.id}','Denied')">Deny</button>
+                </div>`;
+          }
+
+          html += `
+            <div class="request-list-item">
+                <div class="item-details">
+                    <h4>${r.name} <span class="status-tag status-info">${r.type}</span></h4>
+                    <p><strong>Date:</strong> ${r.date}</p>
+                    <p class="text-color-secondary" style="font-size:0.85rem;">Time: ${r.time} (${r.hours}h)</p>
+                    <p class="text-color-secondary" style="font-size:0.85rem;">By: ${r.initiatedBy}</p>
+                    <div style="display:flex; gap:10px; margin-top:5px; font-size:0.8rem;">
+                        <span style="color:${r.directStatus==='Approved'?'green':'orange'}">Direct: ${r.directStatus}</span>
+                        <span style="color:${r.projectStatus==='Approved'?'green':'orange'}">Project: ${r.projectStatus}</span>
+                    </div>
+                </div>
+                <div class="item-actions">
+                    <span class="status-badge ${r.status==='Approved'?'status-approved':r.status==='Denied'?'status-denied':'status-pending'}">${r.status}</span>
+                    ${actions}
+                </div>
+            </div>`;
+      });
+      list.innerHTML = html;
+  }).webGetOvertimeRequests(filter);
+}
+
+function actionOvertime(id, action) {
+  const comment = prompt(`Optional comment for ${action}:`) || "";
+  
+  // Visual feedback
+  const list = document.getElementById('ot-request-list');
+  list.style.opacity = '0.5';
+
+  google.script.run
+    .withSuccessHandler(msg => {
+      alert(msg);
+      list.style.opacity = '1';
+      loadOvertimeRequests();
+    })
+    .withFailureHandler(err => {
+        list.style.opacity = '1';
+        alert("Error: " + err.message);
+    })
+    .webActionOvertime(id, action, comment);
+}
+
+// --- PHASE 6: BREAK CONFIG EDITOR JS ---
+
+function loadBreakConfig() {
+  const container = document.getElementById('break-config-container');
+  container.innerHTML = '<p class="text-color-secondary">Loading rules...</p>';
+  
+  google.script.run
+    .withSuccessHandler(configs => {
+      let html = '';
+      configs.forEach((conf, index) => {
+        html += `
+          <div class="form-row break-rule-row" style="border-bottom:1px solid var(--border-color); padding-bottom:10px; margin-bottom:10px;">
+            <div class="form-group" style="flex:2;">
+              <label>Break Type</label>
+              <input type="text" class="rule-type" value="${conf.type}" readonly style="background-color: var(--input-bg); font-weight:bold;">
+            </div>
+            <div class="form-group">
+              <label>Default (Sec)</label>
+              <input type="number" class="rule-default" value="${conf.defaultDur}">
+              <small class="text-color-secondary">${Math.floor(conf.defaultDur/60)} mins</small>
+            </div>
+            <div class="form-group">
+              <label>Max Allowed (Sec)</label>
+              <input type="number" class="rule-max" value="${conf.maxDur}">
+              <small class="text-color-secondary">${Math.floor(conf.maxDur/60)} mins</small>
+            </div>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
+    })
+    .withFailureHandler(err => {
+      container.innerHTML = `<p class="status-message error visible">${err.message}</p>`;
+    })
+    .webGetBreakConfig();
+}
+
+function saveBreakConfig() {
+  const rows = document.querySelectorAll('.break-rule-row');
+  const newConfigs = [];
+  
+  rows.forEach(row => {
+    newConfigs.push({
+      type: row.querySelector('.rule-type').value,
+      defaultDur: row.querySelector('.rule-default').value,
+      maxDur: row.querySelector('.rule-max').value
+    });
+  });
+  
+  setStatus('break-config-status', 'processing', 'Saving configuration...');
+  
+  google.script.run
+    .withSuccessHandler(msg => {
+      setStatus('break-config-status', 'success', msg);
+      // Refresh user info silently to apply new rules to the current session immediately
+      google.script.run.withSuccessHandler(user => populateUserInfo(user)).getUserInfo();
+    })
+    .withFailureHandler(err => {
+      setStatus('break-config-status', 'error', err.message);
+    })
+    .webSaveBreakConfig(newConfigs);
+}
+
+// 1. Triggered when a user is selected in the "Reporting Line" tab
+function onReportingLineUserChange() {
+  setTimeout(() => {
+    const userEmail = document.getElementById('reporting-line-user').value;
+    if (!userEmail) {
+      document.getElementById('pm-change-section').style.display = 'none';
+      return;
+    }
+
+    // Find user in global list
+    const user = allUsersList.find(u => u.email === userEmail);
+    if (user) {
+      // Show section
+      document.getElementById('pm-change-section').style.display = 'block';
+      
+      // Display Current PM
+      const currentPM = user.projectManager || "None";
+      const pmName = allUsersList.find(u => u.email === currentPM)?.name || currentPM;
+      
+      document.getElementById('current-pm-display').innerText = pmName;
+      document.getElementById('current-pm-display').dataset.email = currentPM; 
+
+      // Reset Radio to Keep
+      document.querySelector('input[name="pm-action"][value="keep"]').checked = true;
+      togglePMDropdown(false);
+      
+      // --- FIX: Use 'allAdminsList' to show only Managers/Admins in the dropdown ---
+      populateAdminDropdown(allAdminsList, selfUserName, 'reporting-line-pm', 'Select New Project Manager');
+    }
+  }, 200); 
+}
+// 2. Toggles the dropdown visibility
+function togglePMDropdown(show) {
+  document.getElementById('pm-dropdown-wrapper').style.display = show ? 'block' : 'none';
+}
+
+// --- FINANCE ADMIN JS ---
+function saveEntitlementTemplate() {
+    const data = {
+        name: document.getElementById('tmpl-name').value,
+        type: document.getElementById('tmpl-type').value,
+        amount: document.getElementById('tmpl-amount').value,
+        currency: document.getElementById('tmpl-curr').value,
+        description: `Template: ${document.getElementById('tmpl-name').value}`
+    };
+    google.script.run.withSuccessHandler(alert).webSaveEntitlementTemplate(data);
+}
+
+function loadEntitlementTemplates() {
+    google.script.run.withSuccessHandler(tmpls => {
+        const sel = document.getElementById('fin-apply-tmpl-select');
+        sel.innerHTML = "";
+        tmpls.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t.id;
+            opt.text = `${t.name} (${t.amount} ${t.currency})`;
+            sel.appendChild(opt);
+        });
+    }).webGetEntitlementTemplates();
+}
+
+function applyTemplateToUsers() {
+    const tmplId = document.getElementById('fin-apply-tmpl-select').value;
+    // Use the custom multi-select logic we built earlier
+    // Assuming 'fin-apply-users-container' uses renderGlobalUserSelector logic
+    // We need to initialize it first.
+    
+    // For now, let's assume we read from the dataset if initialized
+    // NOTE: You must initialize this dropdown in showTab('finance-admin')
+    const wrapper = document.getElementById('fin-apply-users-container');
+    let emails = [];
+    try { emails = JSON.parse(wrapper.dataset.value || "[]"); } catch(e){}
+    
+    if(emails.length === 0) { alert("Select users first."); return; }
+    
+    google.script.run.withSuccessHandler(alert).webApplyEntitlementTemplate(tmplId, emails);
+}
+
+// --- PROJECT ADMIN JS ---
+function loadProjectDashboardData() {
+    const pid = document.getElementById('project-admin-select').value;
+    if(!pid) return;
+    
+    // Load Stats
+    google.script.run.withSuccessHandler(data => {
+        document.getElementById('prj-stat-total').innerText = data.stats.total;
+        document.getElementById('prj-stat-agents').innerText = data.stats.agents;
+        document.getElementById('prj-stat-supers').innerText = data.stats.supers;
+    }).webGetProjectDashboard(pid);
+    
+    // Load Requests
+    google.script.run.withSuccessHandler(reqs => {
+        const list = document.getElementById('project-requests-list');
+        let html = '';
+        reqs.forEach(r => {
+            html += `<div class="request-list-item">
+                <div class="item-details">
+                    <h4>${r.type}: ${r.user}</h4>
+                    <small>${r.date}</small>
+                </div>
+                <span class="status-badge ${r.status === 'Approved' ? 'status-approved' : 'status-pending'}">${r.status}</span>
+            </div>`;
+        });
+        list.innerHTML = html;
+    }).webGetProjectRequests(pid);
+}
+
+function loadOffboardingTab() {
+    // Populate dropdown for termination if the user is a manager/admin
+    if (['admin','superadmin','manager','project_manager'].includes(selfRole)) {
+        populateAdminDropdown(allUsersList, selfUserName, 'offboard-term-user', 'Select Employee');
+        const section = document.getElementById('offboard-initiate-section');
+        if (section) section.style.display = 'block';
+    } else {
+        const section = document.getElementById('offboard-initiate-section');
+        if (section) section.style.display = 'none';
+    }
+    loadOffboardingRequests();
+}
+
+function submitResignation() {
+    const date = document.getElementById('resign-date').value;
+    const reason = document.getElementById('resign-reason').value;
+    if(!date || !reason) { alert("Date and Reason required."); return; }
+    
+    if(!confirm("Are you sure you want to resign? This starts the formal process.")) return;
+    
+    google.script.run.withSuccessHandler(alert).webSubmitResignation(reason, date);
+}
+
+function submitTermination() {
+    const email = document.getElementById('offboard-term-user').value;
+    const date = document.getElementById('term-date').value;
+    const reason = document.getElementById('term-reason').value;
+    
+    if(!email || !date || !reason) { alert("All fields required."); return; }
+    
+    google.script.run.withSuccessHandler(msg => {
+        alert(msg);
+        loadOffboardingRequests();
+    }).webSubmitTermination(email, reason, date);
+}
+
+function loadOffboardingRequests() {
+    const list = document.getElementById('offboarding-list');
+    list.innerHTML = '<p class="text-color-secondary">Loading requests...</p>';
+    
+    google.script.run
+        .withSuccessHandler(reqs => {
+            if (!reqs || reqs.length === 0) { 
+                list.innerHTML = '<p class="text-color-secondary">No pending offboarding requests found.</p>'; 
+                return; 
+            }
+            
+            let html = '';
+            reqs.forEach(r => {
+                let actions = '';
+                // Show buttons if allowed
+                if (['admin','superadmin','manager','project_manager'].includes(selfRole) && r.status !== 'Approved' && r.status !== 'Denied') {
+                     actions = `
+                        <div style="margin-top:8px;">
+                            <button class="approve-btn" onclick="actionOffboard('${r.id}','Approved')">Approve</button>
+                            <button class="deny-btn" onclick="actionOffboard('${r.id}','Denied')">Deny</button>
+                        </div>
+                     `;
+                }
+                
+                let statusClass = 'status-pending';
+                if (r.status === 'Approved') statusClass = 'status-approved';
+                if (r.status === 'Denied') statusClass = 'status-denied';
+                
+                html += `
+                    <div class="request-list-item">
+                        <div class="item-details">
+                            <h4>${r.type}: ${r.name}</h4>
+                            <p><strong>Exit Date:</strong> ${r.exitDate}</p>
+                            <p class="text-color-secondary">${r.reason}</p>
+                            <div style="font-size:0.8rem; margin-top:5px; display:flex; gap:10px;">
+                                <span style="color:${r.directStatus==='Approved'?'green':'orange'}">Direct: ${r.directStatus}</span>
+                                <span style="color:${r.projectStatus==='Approved'?'green':'orange'}">Project: ${r.projectStatus}</span>
+                                <span style="color:${r.hrStatus==='Approved'?'green':'orange'}">HR: ${r.hrStatus}</span>
+                            </div>
+                        </div>
+                        <div class="item-actions">
+                            <span class="status-badge ${statusClass}">${r.status}</span>
+                            ${actions}
+                        </div>
+                    </div>
+                `;
+            });
+            list.innerHTML = html;
+        })
+        .withFailureHandler(err => {
+            // Show the error on screen
+            list.innerHTML = `<p class="status-message error visible">Error loading requests: ${err.message}</p>`;
+        })
+        .webGetOffboardingRequests();
+}
+
+function actionOffboard(id, action) {
+    if(!confirm(action + " this request?")) return;
+    google.script.run.withSuccessHandler(msg => {
+        alert(msg);
+        loadOffboardingRequests();
+    }).webActionOffboarding(id, action, "");
+}
+
+
+// [index.html] REPLACE loadAnalyticsTab
+function loadAnalyticsTab() {
+    // 1. Initialize User Select
+    if (['admin','superadmin','manager','project_manager'].includes(selfRole)) {
+        // Prepare list of ALL emails for default selection
+        const allEmails = allUsersList.map(u => u.email);
+        
+        // Populate with all emails selected by default
+        populateAdminDropdown(allUsersList, selfUserName, 'analytics-user', 'Select Users', allEmails);
+    } else {
+        // Agent View: Locked to self
+        const container = document.getElementById('analytics-user-select-container');
+        const myEmail = allUsersList.find(u => u.name === selfUserName)?.email || selfUserName;
+        
+        // Manually set dataset value for the reader functions
+        container.dataset.value = JSON.stringify([myEmail]);
+        
+        container.innerHTML = `
+            <div style="padding: 10px; background: var(--input-bg); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-color-secondary);">
+                Locked: <strong>${selfUserName}</strong>
+            </div>`;
+    }
+    
+    // 2. Set Default Dates
+    const today = new Date();
+    const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+    document.getElementById('an-start-date').valueAsDate = firstDay;
+    document.getElementById('an-end-date').valueAsDate = today;
+    
+    setStatus('analytics-status', '', '');
+}
+
+function loadAnalyticsData() {
+    const start = document.getElementById('an-start-date').value;
+    const end = document.getElementById('an-end-date').value;
+    
+    // Get Users from dataset (Multi-Select)
+    const container = document.getElementById('analytics-user-select-container');
+    let targetEmails = [];
+    try {
+        targetEmails = JSON.parse(container.dataset.value || "[]");
+    } catch(e) { console.error("JSON Parse Error", e); }
+
+    // Validation
+    if (!start || !end) {
+        setStatus('analytics-status', 'error', 'Please select both Start and End dates.');
+        return;
+    }
+    if (targetEmails.length === 0) {
+        setStatus('analytics-status', 'error', 'Please select at least one User.');
+        return;
+    }
+    if (new Date(end) < new Date(start)) {
+        setStatus('analytics-status', 'error', 'End Date cannot be before Start Date.');
+        return;
+    }
+
+    const filter = {
+        startDate: start,
+        endDate: end,
+        targetEmails: targetEmails // Send Array
+    };
+
+    setStatus('analytics-status', 'processing', `Crunching numbers for ${targetEmails.length} users...`);
+    
+    google.script.run
+        .withSuccessHandler(data => {
+            setStatus('analytics-status', 'success', 'Report generated successfully.');
+            renderAnalytics(data);
+        })
+        .withFailureHandler(err => {
+            setStatus('analytics-status', 'error', err.message);
+        })
+        .webGetAnalyticsData(filter);
+}
+
+function renderAnalytics(data) {
+    // 1. Metrics (Same as before)
+    const m = data.metrics;
+    document.getElementById('an-stat-adherence').innerText = `${m.adherence}%`;
+    document.getElementById('an-stat-shrinkage').innerText = `${m.shrinkage}%`;
+    document.getElementById('an-stat-lateness').innerText = `${m.latenessMins}m`;
+    document.getElementById('an-stat-worked').innerText = `${m.workedHours}h`;
+
+    // 2. Timeline Grid Construction
+    const container = document.getElementById('analytics-heatmap-container');
+    const dates = Object.keys(data.timeline).sort();
+    
+    if (dates.length === 0) {
+        container.innerHTML = '<p class="text-color-secondary">No activity found.</p>';
+        return;
+    }
+
+    let html = '';
+
+    // A. Draw the Time Scale Header (Once per day block or top)
+    const renderScale = () => {
+        let scaleHtml = '<div class="timeline-scale">';
+        for (let i = 0; i < 24; i++) {
+            scaleHtml += `<div class="scale-hour">${i}:00</div>`;
+        }
+        scaleHtml += '</div>';
+        return scaleHtml;
+    };
+
+    // B. Draw Background Grid (48 columns for 30mins)
+    const renderBgGrid = () => {
+        let grid = '<div class="timeline-grid-bg">';
+        for (let i = 0; i < 48; i++) { // 24 hours * 2
+            grid += `<div class="grid-col"></div>`;
+        }
+        grid += '</div>';
+        return grid;
+    };
+
+    // Iterate Dates
+    dates.forEach(date => {
+        html += `<h4 style="margin: 20px 0 10px 0; color:var(--konecta-blue); border-bottom:1px solid var(--border-color);">${date}</h4>`;
+        html += `<div class="timeline-container">`;
+        html += renderScale(); // 00:00 - 23:00 Header
+
+        const agents = data.timeline[date];
+        for (const [agentName, dataObj] of Object.entries(agents)) {
+            const sched = dataObj.schedule;
+            
+            html += `
+                <div class="timeline-agent-row">
+                    <div class="timeline-agent-info">
+                        <strong>${agentName}</strong><br>
+                        <small class="text-color-secondary">${sched.type || 'Off'}</small>
+                        <br><small style="font-size:0.7rem;">${sched.start || ''} - ${sched.end || ''}</small>
+                    </div>
+                    <div class="timeline-track-area">
+                        ${renderBgGrid()}
+                        ${renderAdvancedBars(dataObj)}
+                    </div>
+                </div>
+            `;
+        }
+        html += `</div>`; // End Container
+    });
+    
+    container.innerHTML = html;
+}
+
+// NEW: Renders Ghost Schedule, Actuals, and Flags
+function renderAdvancedBars(dataObj) {
+    const events = dataObj.events;
+    const flags = dataObj.flags;
+    const sched = dataObj.schedule;
+    
+    let html = '';
+    
+    // Helper: Time (HH:mm) to Percentage (0-100%)
+    const getPos = (timeStr) => {
+        if (!timeStr) return null;
+        const [h, m] = timeStr.split(':').map(Number);
+        const totalMins = (h * 60) + m;
+        return (totalMins / 1440) * 100;
+    };
+
+    const getWidth = (start, end) => {
+        const s = getPos(start);
+        const e = getPos(end);
+        if (s === null || e === null) return 0;
+        let w = e - s;
+        if (w < 0) w = (100 - s) + getPos(end); // Overnight handling roughly
+        return w;
+    };
+
+    // 1. Render Ghost Schedule Bar (Background)
+    if (sched.start && sched.end) {
+        const left = getPos(sched.start);
+        const width = getWidth(sched.start, sched.end);
+        html += `<div class="t-bar t-sched" style="left:${left}%; width:${width}%;" title="Scheduled: ${sched.start}-${sched.end}">Scheduled</div>`;
+    }
+
+    // 2. Render Actual Activity Bars
+    events.forEach(ev => {
+        const left = getPos(ev.start);
+        const width = getWidth(ev.start, ev.end);
+        let cls = 't-work';
+        if (ev.type === 'Break') cls = 't-break';
+        if (ev.type === 'Lunch') cls = 't-lunch';
+        if (ev.type === 'Aux') cls = 't-aux';
+        
+        html += `<div class="t-bar ${cls}" style="left:${left}%; width:${width}%;" title="${ev.label}: ${ev.start} - ${ev.end}">${ev.label}</div>`;
+    });
+
+    // 3. Render Flags
+    flags.forEach(flag => {
+        const left = getPos(flag.time);
+        let icon = '!';
+        let cls = 'flag-late';
+        
+        if (flag.type === 'EarlyLeave') { icon = '🚪'; cls = 'flag-early'; }
+        if (flag.type === 'Adherence') { icon = '⚡'; cls = 'flag-window'; } // Break Violation
+        if (flag.type === 'NoShow') { icon = '🚫'; cls = 'flag-noshow'; }
+        if (flag.type === 'Lateness') { icon = '⏰'; }
+
+        // Adjust position slightly to not overlap exactly on the line
+        html += `<div class="t-flag ${cls}" style="left:calc(${left}% - 7px);" data-msg="${flag.msg}">${icon}</div>`;
+    });
+
+    return html;
+}
+
+// Helper to position bars based on time (00:00 to 24:00)
+function renderTimelineBars(events) {
+    let bars = '';
+    const dayStart = 0; // 0 minutes (Midnight)
+    const dayEnd = 1440; // 24 hours * 60
+    
+    const timeToMins = (t) => {
+        if(!t) return 0;
+        const p = t.split(':');
+        return parseInt(p[0])*60 + parseInt(p[1]);
+    };
+
+    events.forEach(ev => {
+        const startMins = timeToMins(ev.start);
+        const endMins = timeToMins(ev.end);
+        const duration = endMins - startMins;
+        
+        if (duration > 0) {
+            const left = (startMins / dayEnd) * 100;
+            const width = (duration / dayEnd) * 100;
+            bars += `<div class="timeline-bar bar-${ev.type}" style="left:${left}%; width:${width}%;" title="${ev.label}: ${ev.start}-${ev.end}"></div>`;
+        }
+    });
+    return bars;
+}
+
+function downloadPayrollReport() {
+    const start = document.getElementById('an-start-date').value;
+    const end = document.getElementById('an-end-date').value;
+    
+    const container = document.getElementById('analytics-user-select-container');
+    let targetEmails = [];
+    try {
+        targetEmails = JSON.parse(container.dataset.value || "[]");
+    } catch(e) {}
+
+    // Validation
+    if (!start || !end) {
+        setStatus('analytics-status', 'error', 'Please select dates for the payroll export.');
+        return;
+    }
+    if (targetEmails.length === 0) {
+        setStatus('analytics-status', 'error', 'Please select at least one User.');
+        return;
+    }
+    
+    setStatus('analytics-status', 'processing', 'Generating Payroll CSV...');
+
+    google.script.run
+        .withSuccessHandler(csvData => {
+            if (!csvData || csvData.length === 0) {
+                setStatus('analytics-status', 'error', 'No data found for this period. Try extending the date range.');
+                return;
+            }
+            
+            // ... (CSV generation logic remains the same) ...
+            
+            let csvContent = "data:text/csv;charset=utf-8,";
+            csvContent += "Date,Name,Email,Status,Login,Logout,Net Worked Hours,Lateness (Mins),Early Leave (Mins),Break Exceed (Mins),Lunch Exceed (Mins),Approved OT (Hours),OT Type,IsAbsent\r\n";
+
+            csvData.forEach(row => {
+                csvContent += `${row.Date},"${row.Name}","${row.Email}",${row.Status},${row.Login},${row.Logout},${row.NetWorkedHours},${row.LatenessMins},${row.EarlyLeaveMins},${row.BreakExceedMins},${row.LunchExceedMins},${row.ApprovedOTHours},${row.OTType},${row.IsAbsent}\r\n`;
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `Payroll_Export_${start}_to_${end}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            setStatus('analytics-status', 'success', 'Download started.');
+        })
+        .withFailureHandler(err => {
+            setStatus('analytics-status', 'error', err.message);
+        })
+        .webGetPayrollExportData(start, end, targetEmails);
+}
+
+
+      // Initialize
+      document.addEventListener("DOMContentLoaded", function() {
+        loadUserInfo(); 
+        
+        // --- PHASE 6: AUTO-REFRESH ---
+        // Refresh data every 600 seconds to keep the dashboard and status live
+        setInterval(() => {
+            if (!document.hidden) { // Only refresh if tab is visible
+                console.log("Auto-refreshing data...");
+                refreshCurrentData();
+            }
+        }, 600000);
+        // -----------------------------
+
+        // Set default dates
+        const today = new Date();
+        document.getElementById('schedule-start-date').valueAsDate = today;
+        document.getElementById('leave-start-date').valueAsDate = today;
+        document.getElementById('history-start-date').valueAsDate = today; 
+        document.getElementById('history-end-date').valueAsDate = today; 
+        document.getElementById('manual-punch-date').valueAsDate = today; 
+        document.getElementById('admin-leave-start-date').valueAsDate = today; 
+        document.getElementById('dashboard-date').valueAsDate = today;
+        document.getElementById('coaching-session-date').valueAsDate = today;
+        
+        // Event Listeners
+        document.getElementById('coaching-session-date').addEventListener('change', updateWeekNumber);
+        
+        // Initial Loads
+        loadTemplateList();
+        updateWeekNumber();
+        calculateOverallScore();
+        loadProjectsDropdown();
+        toggleTimeFields();
+      });
+   </script>
+   
+   
+   <!-- 
+    ==================================================================
+    == MODALS (Moved to end of body, styles are in <head>)
+    ==================================================================
+    -->
+    
+    <!-- Coaching Detail Modal -->
+    <div id="coaching-detail-modal-backdrop" class="modal-backdrop"></div>
+    <div id="coaching-detail-modal" class="modal">
+      <div class="modal-header">
+        <h2>Coaching Session Details</h2>
+        <button class="close-btn" onclick="closeCoachingDetails()">&times;</button>
+      </div>
+      <div id="coaching-detail-modal-body" class="modal-body">
+        <p class="text-color-secondary">Loading details...</p>
+      </div>
+      <div class="modal-footer">
+        <button id="coaching-detail-export-btn" type="button" class="export-btn" style="display: none; margin-right: auto;" onclick="exportSessionDetails()">Export Details</button>
+        <button type="button" class="btn-primary" onclick="closeCoachingDetails()">Close</button>
+      </div>
+    </div>
+  
+    <!-- New User Supervisor Modal -->
+    <div id="supervisor-modal-backdrop" class="modal-backdrop"></div>
+    <div id="supervisor-modal" class="modal" style="max-width: 600px;">
+      <div class="modal-header">
+        <h2>Complete Your Registration</h2>
+      </div>
+      <div class="modal-body">
+        <p class="text-color-secondary">Please fill in your details and select your reporting lines.</p>
+        
+        <div class="form-group">
+          <label>Phone Number</label>
+          <input type="text" id="reg-phone" placeholder="+20...">
+        </div>
+        <div class="form-group">
+          <label>Home Address</label>
+          <input type="text" id="reg-address" placeholder="Full Address">
+        </div>
+
+        <hr class="section-divider">
+
+        <div class="form-group">
+          <label>Direct Manager (Line Manager)</label>
+          <select id="reg-direct-manager" required>
+            <option value="">-- Select Direct Manager --</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label>Functional / Project Manager</label>
+          <select id="reg-functional-manager" required>
+            <option value="">-- Select Project Manager --</option>
+          </select>
+        </div>
+
+        <div id="supervisor-save-status" class="status-message"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-primary" onclick="saveMyRegistration()">Submit Registration</button>
+      </div>
+    </div>
+    
+    <!-- Generic Confirm Modal -->
+    <div id="confirm-modal-backdrop" class="modal-backdrop"></div>
+    <div id="confirm-modal" class="modal">
+      <div class="modal-header">
+        <h2 id="confirm-modal-title">Confirm Action</h2>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-modal-message" class="text-color-secondary">Are you sure you want to do this?</p>
+      </div>
+      <div class="modal-footer">
+        <button id="confirm-modal-cancel-btn" type="button" class="btn-secondary" onclick="hideCustomConfirm()">Cancel</button>
+        <button id="confirm-modal-confirm-btn" type="button" class="btn-danger">Confirm</button>
+      </div>
+    </div>
+
+    <!-- Role Request Modal -->
+    <div id="role-request-modal-backdrop" class="modal-backdrop"></div>
+    <div id="role-request-modal" class="modal">
+      <div class="modal-header">
+        <h2>Request Role Upgrade</h2>
+      </div>
+      <div id="role-request-modal-body" class="modal-body">
+        <form id="admin-request-form" class="form-container">
+          <p class="text-color-secondary">If your supervisor is a 'Superadmin', you can request 'Admin' access. If you are an 'Admin', you can request 'Superadmin' access. Requests will be reviewed by the system owner.</p>
+          <div class="form-group">
+            <label for="admin-request-role">Role to Request</label>
+            <select id="admin-request-role">
+              <option value="admin">Admin</option>
+              <option value="superadmin">Superadmin</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="admin-request-justification">Justification</label>
+            <textarea id="admin-request-justification" rows="3" placeholder="Please explain why you need this role upgrade." required></textarea>
+          </div>
+          <div id="admin-request-status" class="status-message"></div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="hideRoleRequestModal()">Close</button>
+        <button type="button" class="btn-primary" onclick="submitAdminRequest()">Submit Role Request</button>
+      </div>
+    </div>
+    
+    <!-- Role Approval Modal (Superadmin) -->
+    <div id="role-approval-modal-backdrop" class="modal-backdrop"></div>
+    <div id="role-approval-modal" class="modal">
+      <div class="modal-header">
+        <h2>Pending Role Upgrade Requests</h2>
+        <button class="close-btn" onclick="hideRoleApprovalModal()">&times;</button>
+      </div>
+      <div id="role-approval-modal-body" class="modal-body">
+        <div id="role-approval-status" class="status-message"></div>
+        <div id="role-request-list" class="request-list" style="padding-top: 0; margin-top: 0;">
+          <p class="text-color-secondary">Loading requests...</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="hideRoleApprovalModal()">Close</button>
+      </div>
+    </div>
+<!-- Requisition Modal -->
+    <div id="req-modal-backdrop" class="modal-backdrop"></div>
+<div id="req-modal" class="modal">
+  <div class="modal-header">
+    <h2>Open New Job Requisition</h2>
+    <button class="close-btn" onclick="closeReqModal()">&times;</button>
+  </div>
+  <div class="modal-body">
+    <form id="req-form" class="form-container" style="border:none; box-shadow:none; padding:0;">
+      <div class="form-group"><label>Job Title</label><input type="text" id="req-title" required></div>
+      <div class="form-group"><label>Department</label><input type="text" id="req-dept" required></div>
+      <div class="form-group"><label>Hiring Manager Email</label><input type="email" id="req-manager" placeholder="manager@konecta.com" required></div>
+      <div class="form-group"><label>Job Description</label><textarea id="req-desc" rows="4"></textarea></div>
+    </form>
+  </div>
+  <div class="modal-footer">
+    <button class="btn-secondary" onclick="closeReqModal()">Cancel</button>
+    <button class="btn-primary" onclick="submitRequisition()">Open Position</button>
+  </div>
+</div>
+    <!-- Hiring Wizard Modal -->
+
+    <div id="hire-modal-backdrop" class="modal-backdrop"></div>
+<div id="hire-modal" class="modal" style="max-width: 900px; max-height: 95vh;">
+  <div class="modal-header">
+    <h2>Finalize Hiring Details</h2>
+    <button class="close-btn" onclick="closeHireModal()">&times;</button>
+  </div>
+  <div class="modal-body">
+    <p class="text-color-secondary">Please complete the employee profile to generate the contract and access.</p>
+    <form id="hire-form" class="form-container" style="border:none; box-shadow:none; padding:0;">
+      <input type="hidden" id="hire-candidate-id">
+      
+      <h3 style="font-size:1rem; color:var(--konecta-blue); border-bottom:1px solid #eee; padding-bottom:5px;">Contract & Role</h3>
+      <div class="form-row">
+        <div class="form-group"><label>Full Legal Name</label><input type="text" id="hire-fullname" required></div>
+        <div class="form-group"><label>Konecta Email (Created by IT)</label><input type="email" id="hire-k-email" required></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Job Title</label><input type="text" id="hire-title" required></div>
+        <div class="form-group"><label>Department</label><input type="text" id="hire-dept" required></div>
+        <div class="form-group"><label>Job Level</label><input type="text" id="hire-level"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Contract Type</label>
+          <select id="hire-contract">
+            <option value="Permanent">Permanent</option>
+            <option value="Temporary">Temporary</option>
+            <option value="Internship">Internship</option>
+          </select>
+        </div>
+        <div class="form-group"><label>Hiring Date</label><input type="date" id="hire-date" required></div>
+        <div class="form-group"><label>Probation End Date</label><input type="date" id="hire-probation"></div>
+      </div>
+
+      <h3 style="font-size:1rem; color:var(--konecta-blue); border-bottom:1px solid #eee; padding-bottom:5px; margin-top:20px;">Reporting Line</h3>
+      <div class="form-row">
+        <div class="form-group"><label>Direct Manager Email</label><input type="email" id="hire-direct-mgr" required></div>
+        <div class="form-group"><label>Project Manager Email</label><input type="email" id="hire-project-mgr"></div>
+      </div>
+      <div class="form-row">
+        
+        <div class="form-group"><label>Dotted Line Manager</label><input type="email" id="hire-dotted-mgr"></div>
+      </div>
+
+      <h3 style="font-size:1rem; color:var(--konecta-blue); border-bottom:1px solid #eee; padding-bottom:5px; margin-top:20px;">Financials & PII</h3>
+      <div class="form-row">
+        <div class="form-group"><label>Basic Salary</label><input type="number" id="hire-salary" required></div>
+        <div class="form-group"><label>Hourly Rate (Optional)</label><input type="number" id="hire-hourly"></div>
+        <div class="form-group"><label>Bonus Plan</label><input type="text" id="hire-bonus"></div>
+        <div class="form-group"><label>Variable/Bonus</label><input type="number" id="hire-variable"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>National ID</label><input type="text" id="hire-nat-id" required></div>
+        <div class="form-group"><label>Social Insurance No.</label><input type="text" id="hire-social"></div>
+        <div class="form-group"><label>Passport No.</label><input type="text" id="hire-passport"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Birth Date</label><input type="date" id="hire-dob" required></div>
+        <div class="form-group"><label>Marital Status</label>
+          <select id="hire-marital">
+            <option value="Single">Single</option>
+            <option value="Married">Married</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group"><label>Home Address</label><input type="text" id="hire-address" required></div>
+      <div class="form-group"><label>Emergency Contact (Name - Relation - Phone)</label><input type="text" id="hire-emergency"></div>
+    </form>
+    <div id="hire-status" class="status-message"></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn-secondary" onclick="closeHireModal()">Cancel</button>
+    <button class="btn-primary submit-btn-green" onclick="submitHire()">Confirm Hire & Create Account</button>
+  </div>
+</div>
+
+<!-- Rejection Modal -->
+<div id="reject-modal-backdrop" class="modal-backdrop"></div>
+<div id="reject-modal" class="modal">
+  <div class="modal-header"><h2>Reject Candidate</h2></div>
+  <div class="modal-body">
+    <input type="hidden" id="reject-candidate-id">
+    <label>Reason for Rejection (Internal)</label>
+    <select id="reject-reason" class="form-group" style="width:100%; margin-bottom:10px;">
+        <option value="Skills Mismatch">Skills Mismatch</option>
+        <option value="Culture Fit">Culture Fit</option>
+        <option value="Salary Expectations">Salary Expectations</option>
+        <option value="Position Filled">Position Filled</option>
+        <option value="Other">Other</option>
+    </select>
+    <div class="form-group">
+        <input type="checkbox" id="reject-send-email" checked> 
+        <label for="reject-send-email" style="display:inline;">Send Automated Rejection Email</label>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn-secondary" onclick="closeRejectModal()">Cancel</button>
+    <button class="btn-danger" onclick="submitRejection()">Confirm Rejection</button>
+  </div>
+</div>
+
+  </body>
+</html>
