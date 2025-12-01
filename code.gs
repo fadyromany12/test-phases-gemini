@@ -1337,8 +1337,8 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
   // 3. Get Current State (Critical for Logic)
   const row = findOrCreateRow(adherenceSheet, userName, shiftDate, formattedDate);
   // Fetch current state from Column Y (25) - LastAction
-  const lastAction = adherenceSheet.getRange(row, 25).getValue() || "Logged Out"; 
-  
+  const lastAction = adherenceSheet.getRange(row, 25).getValue() || "Logged Out";
+
   // 4. LOGIC ENGINE
   
   // --- A. LOGIN LOGIC ---
@@ -1346,15 +1346,38 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
     // Check 1: Already Logged In?
     const existingLogin = adherenceSheet.getRange(row, 3).getValue();
     if (existingLogin) throw new Error("You have already logged in today. Duplicate login is not allowed.");
-
+    
     // Check 2: 4-Hour Schedule Lock (Admins bypass this)
     if (!puncherIsAdmin) {
        validateScheduleLock(userEmail, nowTimestamp);
     }
 
+    // --- TARDY CALCULATION FIX ---
+    const sched = getScheduleForDate(userEmail, shiftDate);
+    if (sched && sched.start) {
+      const schedStart = new Date(sched.start);
+      // Calculate difference in seconds
+      const diffSec = (nowTimestamp.getTime() - schedStart.getTime()) / 1000;
+      
+      // Write Tardy if positive (Late), else 0
+      // Tardy is Column K (Index 11)
+      adherenceSheet.getRange(row, 11).setValue(diffSec > 0 ? diffSec : 0);
+      
+      // Also write Pre-Shift Overtime if negative (Early)
+      // Pre-Shift OT is Column X (Index 24)
+      if (diffSec < 0) {
+         const earlySec = Math.abs(diffSec);
+         const threshold = getBreakConfig("Overtime Pre-Shift").default || 300;
+         if (earlySec > threshold) {
+             adherenceSheet.getRange(row, 24).setValue(earlySec);
+         }
+      }
+    }
+    // -----------------------------
+
     // Execution
     adherenceSheet.getRange(row, 3).setValue(nowTimestamp); // Login Time
-    adherenceSheet.getRange(row, 14).setValue("Present");   // Leave Type
+    adherenceSheet.getRange(row, 14).setValue("Present"); // Leave Type
     updateState(adherenceSheet, row, "Login", nowTimestamp);
     logsSheet.appendRow([new Date(), userName, userEmail, action, nowTimestamp]);
     return `Welcome ${userName}. You are successfully Logged In.`;
@@ -1363,7 +1386,7 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
   // --- B. PRE-REQUISITE CHECK (Must be logged in to do anything else) ---
   const loginTime = adherenceSheet.getRange(row, 3).getValue();
   if (!loginTime) throw new Error("You must punch 'Login' before performing any other action.");
-  
+
   // --- C. LOGOUT LOGIC ---
   if (action === "Logout") {
     // Check: Must be in "Login" state (Working) to logout. Cannot logout from Break/AUX.
@@ -1401,7 +1424,7 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
     "Lunch In": 6, "Lunch Out": 7, 
     "Last Break In": 8, "Last Break Out": 9 
   };
-  
+
   if (breakCols[action]) {
       const colIndex = breakCols[action];
       const isBreakIn = action.endsWith("In");
@@ -1423,7 +1446,6 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
           
           // Check Schedule Window (Compliance)
           checkBreakWindowCompliance(adherenceSheet, row, userEmail, action, nowTimestamp);
-          
           return `${action} recorded. Enjoy your break.`;
 
       } else {
@@ -1457,7 +1479,7 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
   throw new Error("Unknown punch action.");
 }
 
-// --- HELPER: Process AUX Codes (Reusable & Multi-use) ---
+
 // --- HELPER: Process AUX Codes (Fixed for Multi-word codes like "System Down") ---
 function processAuxCode(auxSheet, mainSheet, mainRow, userName, userEmail, action, now, lastAction, adminEmail) {
     // FIX: Handle codes with spaces (e.g., "System Down In")
