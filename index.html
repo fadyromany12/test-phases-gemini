@@ -3180,7 +3180,7 @@ function populateUserInfo(user) {
   document.getElementById('buttons').style.display = 'block';
   document.getElementById('other-buttons').style.display = 'block';
 
-  // --- PERMISSIONS LOGIC ---
+// --- PERMISSIONS LOGIC ---
   const can = (perm) => user.permissions && user.permissions.includes(perm);
 
   const setDisplay = (id, condition) => {
@@ -3200,7 +3200,9 @@ function populateUserInfo(user) {
   setDisplay('reporting-line-tab-button', can('MANAGE_HIERARCHY'));
 
   // 3. Admin Tools
-  setDisplay('finance-admin-tab-button', can('MANAGE_FINANCE'));
+  // FIX 3: Explicitly hide Finance Admin for 'agent' role even if RBAC says TRUE
+  setDisplay('finance-admin-tab-button', can('MANAGE_FINANCE') && user.role !== 'agent');
+  setDisplay('analytics-tab-buttonn', can('VIEW_FULL_DASHBOARD') && user.role !== 'agent');
   setDisplay('schedule-tab-button', can('EDIT_SCHEDULE'));
   setDisplay('project-admin-tab-button', can('MANAGE_PROJECTS'));
   setDisplay('admin-tools-tab-button', can('MANAGE_BALANCES') || can('PUNCH_OTHERS'));
@@ -3210,7 +3212,7 @@ function populateUserInfo(user) {
   setDisplay('recruitment-tab-button', can('MANAGE_RECRUITMENT'));
   
   // 4. HR Admin
-  setDisplay('hr-admin-tab-button', can('OFFBOARD_EMPLOYEE')); 
+  setDisplay('hr-admin-tab-button', can('OFFBOARD_EMPLOYEE'));
   
   // Specific Logic for Panels
   if (can('PUNCH_OTHERS')) {
@@ -3742,8 +3744,10 @@ function formatStatusWithIcon(status) {
     if (s.includes('first break')) return '☕ On First Break';
     if (s.includes('last break')) return '☕ On Last Break';
     if (s.includes('lunch')) return '🍽️ On Lunch';
-    if (s.includes('coaching')) return '🎓 Coaching';
-    if (s.includes('meeting')) return '📅 Meeting';
+    if (s.includes('coaching')) return '🎓 Coaching' + status;
+    if (s.includes('meeting')) return '📅 Meeting' + status;
+    if (s.includes('personal')) return '🏠 ' + status;
+    if (s.includes('system down')) return '🚨 ' + status;
     if (s === 'logged out') return '⚫ Logged Out';
     
     return status;
